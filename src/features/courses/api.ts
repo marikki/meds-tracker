@@ -1,4 +1,4 @@
-import type { Drug, DrugInput, DrugWithPrescriptions, Overview, Person } from './types';
+import type { CourseRow, Drug, DrugInput, DrugWithPrescriptions, Overview, Person } from './types';
 
 /** Клієнт без глобального стану: базовий URL передає хост (окремий застосунок чи FamilyHub). */
 export function createApi(base: string) {
@@ -24,6 +24,11 @@ export function createApi(base: string) {
     overview: (person: string) => request<Overview>('GET', `/overview?person=${encodeURIComponent(person)}`),
     startCourses: (startDate: string, prescriptionIds: number[]) =>
       request('POST', '/courses', { startDate, prescriptionIds }),
+    prescriptionCourses: (prescriptionId: number) =>
+      request<CourseRow[]>('GET', `/prescriptions/${prescriptionId}/courses`),
+    updateCourse: (id: number, patch: { startDate?: string; endedEarlyOn?: string | null }) =>
+      request<CourseRow>('PATCH', `/courses/${id}`, patch),
+    deleteCourse: (id: number) => request<void>('DELETE', `/courses/${id}`),
   };
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
+import { EditCourse } from './EditCourse';
 import { StartCourse } from './StartCourse';
 import { daysUntil, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
@@ -18,6 +19,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
+  // Активний курс, відкритий для виправлення (призначення одного препарату)
+  const [editing, setEditing] = useState<OverviewItem[] | null>(null);
   // Збільшується після старту курсів, щоб перечитати огляд
   const [version, setVersion] = useState(0);
 
@@ -54,6 +57,18 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           initialPerson={person}
           onClose={(changed) => {
             setStarting(false);
+            if (changed) setVersion((v) => v + 1);
+          }}
+        />
+      )}
+      {editing && (
+        <EditCourse
+          api={api}
+          people={people}
+          items={editing}
+          today={t}
+          onClose={(changed) => {
+            setEditing(null);
             if (changed) setVersion((v) => v + 1);
           }}
         />
@@ -98,7 +113,12 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
         {active.map((g) => {
           const c = g[0].forecast.activeCourse!;
           return (
-            <article key={g[0].drug.id} className="flex flex-col gap-2.5 rounded-2xl bg-surface px-4 py-3.5">
+            <button
+              key={g[0].drug.id}
+              type="button"
+              onClick={() => setEditing(g)}
+              className="flex flex-col gap-2.5 rounded-2xl bg-surface px-4 py-3.5 text-left"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-semibold">{g[0].drug.name}</div>
@@ -113,7 +133,7 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                 <span>День {c.day} из {c.totalDays}</span>
                 <span>до {shortDate(c.endDate, t)}</span>
               </div>
-            </article>
+            </button>
           );
         })}
       </section>

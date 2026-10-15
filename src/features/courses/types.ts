@@ -31,6 +31,15 @@ export interface DrugInput {
   prescriptions: { personId: string; dosage: string }[];
 }
 
+/** Рядок курсу як його віддає сервер: GET /prescriptions/:id/courses, PATCH /courses/:id */
+export interface CourseRow {
+  id: number;
+  prescription_id: number;
+  start_date: ISODate;
+  planned_end_date: ISODate;
+  ended_early_on: ISODate | null;
+}
+
 export interface Forecast {
   status: Status;
   activeCourse: { startDate: ISODate; endDate: ISODate; day: number; totalDays: number } | null;
