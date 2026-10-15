@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* Токени з макета. У FamilyHub ці змінні перевизначаються темою хоста. */
+@theme {
+  --font-sans: "Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-ground: #f4f3ee;
+  --color-surface: #ffffff;
+  --color-ink: #1b1e1c;
+  --color-muted: #5e645f;
+  --color-line: #e3e1d9;
+  --color-track: #e7e5dd;
+  --color-accent: #1f6b61;
+  --color-accent-soft: #e1eeea;
+  --color-accent-ink: #154c45;
+  --color-due: #b4470f;
+  --color-due-soft: #fbeadf;
+  --color-due-ink: #8a3409;
+  --color-me: #1f6b61;
+  --color-partner: #d6e4f5;
+  --color-partner-ink: #1e3a5f;
+}
+
+html, body { background: var(--color-ground); color: var(--color-ink); }
+body { margin: 0; font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }

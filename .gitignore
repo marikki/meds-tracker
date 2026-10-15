@@ -1,0 +1,12 @@
+# Секрети і дані — ніколи не в git (репозиторій публічний)
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Збірка і залежності
+node_modules/
+dist/
