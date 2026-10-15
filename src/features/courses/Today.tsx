@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
+import { StartCourse } from './StartCourse';
 import { daysUntil, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
 
@@ -16,10 +17,13 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [person, setPerson] = useState('all');
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
+  // Збільшується після старту курсів, щоб перечитати огляд
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     api.overview(person).then(setData, (e: Error) => setError(e.message));
-  }, [api, person]);
+  }, [api, person, version]);
 
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
   const badges = (group: OverviewItem[]) => (
@@ -43,6 +47,17 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
 
   return (
     <div className="flex flex-col gap-5 px-5 pt-6 pb-6">
+      {starting && (
+        <StartCourse
+          api={api}
+          people={people}
+          initialPerson={person}
+          onClose={(changed) => {
+            setStarting(false);
+            if (changed) setVersion((v) => v + 1);
+          }}
+        />
+      )}
       <header>
         <p className="text-sm text-muted">{shortDate(t, t)}</p>
         <h1 className="text-3xl font-bold tracking-tight">Сегодня</h1>
@@ -71,8 +86,9 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
               </div>
             );
           })}
-          {/* TODO: екран «Начать курс» */}
-          <button type="button" className="h-11 rounded-xl bg-due font-semibold text-white">Начать курс</button>
+          <button type="button" onClick={() => setStarting(true)} className="h-11 rounded-xl bg-due font-semibold text-white">
+            Начать курс
+          </button>
         </section>
       )}
 
