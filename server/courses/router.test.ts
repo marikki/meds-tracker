@@ -88,4 +88,13 @@ describe('courses router', () => {
     expect((await call('POST', '/drugs', { name: 'X', kind: 'pill', courseDays: 1, breakDays: 0 })).status).toBe(400);
     expect((await call('POST', '/courses', { startDate: '2026-02-30', prescriptionIds: [1] })).status).toBe(400);
   });
+
+  it('назва унікальна без урахування регістру — і для кирилиці теж', async () => {
+    expect((await call('POST', '/drugs', { name: 'МАГНИЙ', kind: 'supplement', courseDays: 1, breakDays: 0 })).status).toBe(409);
+    const omega = await call('POST', '/drugs', { name: 'Омега-3', kind: 'supplement', courseDays: 60, breakDays: 30 });
+    expect(omega.status).toBe(201);
+    expect((await call('PATCH', `/drugs/${omega.json.id}`, { name: 'магний' })).status).toBe(409);
+    // власну назву можна змінити лише регістром
+    expect((await call('PATCH', `/drugs/${omega.json.id}`, { name: 'ОМЕГА-3' })).status).toBe(200);
+  });
 });

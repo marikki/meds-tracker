@@ -129,6 +129,13 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     }
   }
 
+  /** COLLATE NOCASE у SQLite не враховує регістр лише для латиниці, тому кирилицю порівнюємо тут. */
+  function assertUniqueName(name: string, exceptId?: number) {
+    const key = name.toLocaleLowerCase();
+    const clash = (q.drugs.all() as DrugRow[]).find((d) => d.id !== exceptId && d.name.toLocaleLowerCase() === key);
+    if (clash) throw new HttpError(409, 'Препарат с таким названием уже есть');
+  }
+
   function writePrescriptions(drugId: number, list: unknown) {
     if (!Array.isArray(list)) throw new HttpError(400, 'prescriptions: массив');
     const people = new Set((q.people.all() as { id: string }[]).map((p) => p.id));
@@ -170,11 +177,13 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const kind = b.kind;
     if (!KINDS.includes(kind)) throw new HttpError(400, `kind: ${KINDS.join(' | ')}`);
     const id = db.transaction(() => {
+      const name = str(b.name, 'name', { required: true });
+      assertUniqueName(name);
       const info = db
         .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, notes)
                   VALUES (?, ?, ?, ?, ?, ?)`)
         .run(
-          str(b.name, 'name', { required: true }),
+          name,
           kind,
           int(b.courseDays, 'courseDays', 1),
           int(b.breakDays, 'breakDays', 0),
@@ -210,6 +219,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
           b.archived === undefined ? current.archived_at : b.archived ? new Date().toISOString() : null,
       };
       if (!KINDS.includes(next.kind)) throw new HttpError(400, `kind: ${KINDS.join(' | ')}`);
+      assertUniqueName(next.name, id);
       db.prepare(`UPDATE drugs SET name=@name, kind=@kind, course_days=@course_days, break_days=@break_days,
                   courses_per_year=@courses_per_year, notes=@notes, archived_at=@archived_at WHERE id=@id`)
         .run({ ...next, id });

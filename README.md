@@ -69,6 +69,9 @@ cp .env.example .env && nano .env
 mkdir -p data && sudo chown 1000:1000 data     # контейнер працює від користувача node (uid 1000)
 docker compose up -d --build
 
+# зона ліміту спроб входу (один раз на сервер; на поточному VPS уже є)
+printf '%s\n' 'limit_req_zone "$binary_remote_addr$host" zone=login:10m rate=5r/m;' 'limit_req_status 429;' \
+  | sudo tee /etc/nginx/conf.d/login-ratelimit.conf
 sudo cp nginx/meds.marikkish.com.conf /etc/nginx/sites-available/
 sudo ln -s /etc/nginx/sites-available/meds.marikkish.com.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
@@ -76,6 +79,18 @@ sudo certbot --nginx -d meds.marikkish.com
 ```
 
 DNS: A-запис `meds.marikkish.com` на IP VPS.
+
+### Користувачі
+
+Задаються в `.env` парами `PASSWORD_<ЛОГІН>` / `NAME_<ЛОГІН>`; у форму входу вводиться логін
+латиницею (`marina`), а не відображуване ім'я. Додати нового — на сервері:
+
+```bash
+./scripts/add-user.sh kostya Костя
+```
+
+Скрипт генерує пароль, дописує його в `.env` (попередній зберігає як `.env.bak-*`),
+перестворює контейнер і один раз показує логін і пароль.
 
 Бекап: `scripts/backup.sh` у cron, щодня. Копію за межі VPS ще треба налаштувати (TODO в скрипті).
 

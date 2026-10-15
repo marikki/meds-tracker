@@ -15,6 +15,22 @@ export interface Drug {
   archived: boolean;
 }
 
+export interface DrugPrescription { id: number; personId: string; dosage: string }
+
+/** Елемент довідника: GET /drugs */
+export interface DrugWithPrescriptions extends Drug { prescriptions: DrugPrescription[] }
+
+/** Тіло POST /drugs і PATCH /drugs/:id */
+export interface DrugInput {
+  name: string;
+  kind: Drug['kind'];
+  courseDays: number;
+  breakDays: number;
+  coursesPerYear: number | null;
+  notes: string;
+  prescriptions: { personId: string; dosage: string }[];
+}
+
 export interface Forecast {
   status: Status;
   activeCourse: { startDate: ISODate; endDate: ISODate; day: number; totalDays: number } | null;
