@@ -1,22 +1,63 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { CoursesModule } from './features/courses';
+import { OfflineBanner } from './OfflineBanner';
 
 /** Оболонка лише окремого застосунку: вхід + модуль. У FamilyHub не переїжджає. */
 type Me = { id: string; name: string };
 
+const ME_CACHE_KEY = 'meds-tracker:me';
+
+function loadCachedMe(): Me | undefined {
+  try {
+    const raw = localStorage.getItem(ME_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Me) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveMe(me: Me | null) {
+  if (me) localStorage.setItem(ME_CACHE_KEY, JSON.stringify(me));
+  else localStorage.removeItem(ME_CACHE_KEY);
+}
+
 export function App() {
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const cachedMe = loadCachedMe();
+  const [me, setMe] = useState<Me | null | undefined>(cachedMe ?? undefined);
 
   useEffect(() => {
     fetch('/api/auth/me')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setMe)
-      .catch(() => setMe(null));
+      .then(async (r) => {
+        if (r.ok) {
+          const next = (await r.json()) as Me;
+          saveMe(next);
+          setMe(next);
+          return;
+        }
+        if (r.status === 401 || r.status === 403) {
+          saveMe(null);
+          setMe(null);
+        }
+      })
+      .catch(() => {
+        if (!cachedMe) setMe(null);
+      });
   }, []);
 
   if (me === undefined) return null;
-  if (me === null) return <Login onDone={setMe} />;
-  return <CoursesModule apiBase="/api/courses" currentPersonId={me.id} />;
+  if (me === null)
+    return (
+      <>
+        <OfflineBanner />
+        <Login onDone={(m) => { saveMe(m); setMe(m); }} />
+      </>
+    );
+  return (
+    <>
+      <OfflineBanner />
+      <CoursesModule apiBase="/api/courses" currentPersonId={me.id} />
+    </>
+  );
 }
 
 function Login({ onDone }: { onDone: (me: Me) => void }) {

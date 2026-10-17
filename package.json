@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "concurrently -n api,web \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch server/server.ts",
@@ -40,6 +42,8 @@
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vitest": "^3.1.4"
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^3.1.4",
+    "workbox-window": "^7.4.1"
   }
 }
