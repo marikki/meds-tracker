@@ -4,6 +4,7 @@ import type { CoursesApi } from './api';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { CourseHistory } from './CourseHistory';
+import { useOnVisible } from './useOnVisible';
 import type { Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Person } from './types';
 
 const KIND_LABEL: Record<Drug['kind'], string> = { supplement: 'Добавка', peptide: 'Пептид' };
@@ -86,6 +87,7 @@ export function Drugs({ api, people }: { api: CoursesApi; people: Person[] }) {
     }, (e: Error) => setError(e.message));
   }, [api]);
   useEffect(load, [load]);
+  useOnVisible(load);
 
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
 

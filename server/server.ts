@@ -28,6 +28,11 @@ app.disable('x-powered-by');
 app.use(cookieParser());
 
 const auth = createAuth(JWT_SECRET, users, IS_PROD);
+// Відповіді API не кешуються ніде: після зміни екран має бачити свіжі дані
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use('/api/auth', auth.router);
 app.use('/api/courses', auth.requireAuth, createCoursesRouter({ db }));
 app.get('/api/health', (_req, res) => {

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
@@ -9,6 +9,7 @@ import { EditCourse } from './EditCourse';
 import { StartCourse } from './StartCourse';
 import { daysUntil, plural, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
+import { useOnVisible } from './useOnVisible';
 import { afterText, drugLines, groupByUnit, uniquePeople, unitKey, unitName } from './units';
 
 /** «через 12 дн.» + «после «Витамины B»» через крапку */
@@ -41,6 +42,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   useEffect(() => {
     api.overview(person).then(setData, (e: Error) => setError(e.message));
   }, [api, person, version]);
+  // Повернулися в застосунок — перечитуємо: дані могли змінитися на іншому телефоні
+  useOnVisible(useCallback(() => setVersion((v) => v + 1), []));
 
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
   const badges = (group: OverviewItem[]) => (
