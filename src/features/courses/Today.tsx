@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
+import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
 import { EditCourse } from './EditCourse';
@@ -111,51 +112,64 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
       <PersonSwitch people={people} value={person} onChange={setPerson} />
 
       {due.length > 0 && (
-        <section className="flex flex-col gap-3 rounded-2xl bg-due-soft p-4">
-          <h2 className="font-bold text-due-ink">Пора начинать · {due.length}</h2>
+        <section className="flex flex-col gap-2.5">
+          <h2 className="flex items-center gap-2 text-lg font-bold">
+            Пора начинать
+            <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-due px-1.5 text-[13px] font-semibold text-white">
+              {due.length}
+            </span>
+          </h2>
           {due.map((g) => {
             const f = g[0].forecast;
+            const key = unitKey(g[0]);
+            const drugs = drugLines(g).length;
+            // Ржавим лише справжнє «пора», а не «ще не приймали»
+            const when =
+              f.nextStartDate === null
+                ? ''
+                : f.overdueDays === 0
+                  ? 'Перерыв закончился сегодня'
+                  : `Перерыв закончился ${shortDate(f.nextStartDate, t)}`;
+            const rest = join(
+              g[0].group ? `${drugs} ${plural(drugs, ['препарат', 'препарата', 'препаратов'])}` : '',
+              when ? '' : 'Ещё не принимали',
+              afterText(g[0]),
+            );
             return (
-              <label key={unitKey(g[0])} className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={picked.has(unitKey(g[0]))}
-                  onChange={() => togglePick(unitKey(g[0]))}
-                  className="size-[22px] shrink-0 accent-due"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold">{unitName(g[0])}</div>
-                  <div className="text-sm text-due-ink">
-                    {join(
-                      f.nextStartDate === null
-                        ? 'Ещё не принимали'
-                        : f.overdueDays === 0
-                          ? 'Перерыв закончился сегодня'
-                          : `Перерыв закончился ${shortDate(f.nextStartDate, t)}`,
-                      afterText(g[0]),
-                    )}
-                  </div>
-                </div>
+              <label
+                key={key}
+                className="flex cursor-pointer items-center gap-3.5 rounded-2xl bg-surface px-4 py-3 ring-1 ring-transparent transition-colors ring-inset has-checked:bg-due-soft has-checked:ring-due/35 motion-reduce:transition-none"
+              >
+                <Check tone="due" checked={picked.has(key)} onChange={() => togglePick(key)} />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="font-semibold">{unitName(g[0])}</span>
+                  <span className="text-sm text-muted">
+                    {when && <span className="font-medium text-due-ink">{when}</span>}
+                    {when && rest && ' · '}
+                    {rest}
+                  </span>
+                </span>
                 {badges(g)}
               </label>
             );
           })}
           {startError && <p className="text-sm text-due-ink">{startError}</p>}
           {chosen.length === 0 ? (
-            <button type="button" onClick={() => setStarting({})} className="h-11 rounded-xl bg-due font-semibold text-white">
-              Начать курс
+            <button type="button" onClick={() => setStarting({})}
+              className="mt-1 h-12 rounded-xl bg-due-soft font-semibold text-due-ink">
+              Выбрать и начать
             </button>
           ) : (
-            <>
+            <div className="mt-1 flex flex-col gap-1">
               <button type="button" disabled={busy} onClick={startToday}
-                className="h-11 rounded-xl bg-due font-semibold text-white disabled:opacity-60">
+                className="h-12 rounded-xl bg-due font-semibold text-white disabled:opacity-60">
                 Начать {chosen.length} {plural(chosen.length, ['курс', 'курса', 'курсов'])} сегодня
               </button>
               <button type="button" onClick={() => setStarting({ preselected: chosenIds })}
-                className="self-center text-sm font-semibold text-due-ink">
+                className="h-10 self-center px-3 text-sm font-semibold text-due-ink">
                 Выбрать другую дату
               </button>
-            </>
+            </div>
           )}
         </section>
       )}

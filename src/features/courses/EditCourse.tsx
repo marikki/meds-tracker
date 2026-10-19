@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
+import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { addDays, shortDate } from './format';
 import type { CourseRow, OverviewItem, Person } from './types';
@@ -131,9 +132,8 @@ export function EditCourse({
                   </span>
                 );
                 return items.length > 1 ? (
-                  <label key={i.prescriptionId} className="flex items-center gap-3.5 py-3">
-                    <input type="checkbox" checked={who.has(i.prescriptionId)} onChange={() => toggle(i.prescriptionId)}
-                      className="size-[22px] shrink-0 accent-accent" />
+                  <label key={i.prescriptionId} className="flex cursor-pointer items-center gap-3.5 py-3">
+                    <Check checked={who.has(i.prescriptionId)} onChange={() => toggle(i.prescriptionId)} />
                     {info}
                   </label>
                 ) : (

@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
+import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import type { Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Person } from './types';
 
@@ -391,7 +392,7 @@ function DrugForm({
           return (
             <div key={p.id} className="flex items-center gap-3 rounded-xl bg-surface px-3 py-2">
               <label className="flex min-w-24 items-center gap-2 font-medium">
-                <input type="checkbox" checked={on} onChange={() => togglePerson(p.id)} className="size-5 accent-accent" />
+                <Check checked={on} onChange={() => togglePerson(p.id)} />
                 {p.name}
               </label>
               {on && (
@@ -534,9 +535,8 @@ function GroupForm({
           {candidates.map((d) => {
             const other = d.groupId !== null && d.groupId !== group?.id ? groupName(d.groupId) : undefined;
             return (
-              <label key={d.id} className="flex items-center gap-3 py-2.5">
-                <input type="checkbox" checked={members.has(d.id)} onChange={() => toggle(d.id)}
-                  className="size-5 shrink-0 accent-accent" />
+              <label key={d.id} className="flex cursor-pointer items-center gap-3 py-2.5">
+                <Check checked={members.has(d.id)} onChange={() => toggle(d.id)} />
                 <span className="flex min-w-0 flex-col">
                   <span className="font-medium">{d.name}</span>
                   {other && <span className="text-[13px] text-muted">сейчас в «{other}» — перейдёт сюда</span>}

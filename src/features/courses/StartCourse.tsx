@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
+import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { addDays, daysUntil, plural, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
@@ -123,14 +124,8 @@ export function StartCourse({
         <h2 className={`text-[13px] font-semibold tracking-wider uppercase ${titleClass}`}>{title}</h2>
         <div className="divide-y divide-line rounded-2xl bg-surface px-4">
           {items.map((r) => (
-            <label key={r.key} className="flex items-center gap-3.5 py-3.5">
-              <input
-                type="checkbox"
-                checked={isOn(r)}
-                disabled={r.kind === 'busy'}
-                onChange={() => toggle(r)}
-                className="size-[22px] shrink-0 accent-accent"
-              />
+            <label key={r.key} className={`flex items-center gap-3.5 py-3.5 ${r.kind === 'busy' ? '' : 'cursor-pointer'}`}>
+              <Check checked={isOn(r)} disabled={r.kind === 'busy'} onChange={() => toggle(r)} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className={`font-semibold ${r.kind === 'busy' ? 'text-muted' : ''}`}>{unitName(r.items[0])}</span>
                 {r.items[0].group && (
