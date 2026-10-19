@@ -468,15 +468,14 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
   // ---------- курси ----------
   /**
    * Старт кількох курсів однією датою: { startDate, prescriptionIds: number[], endDate? }.
-   * endDate — для минулого курсу, внесеного заднім числом: його фактичний кінець, не з схеми.
+   * endDate — фактичний кінець замість схеми: для минулого курсу заднім числом
+   * або щоб дописати препарат комплексу до вже наявного курсу.
    */
   r.post('/courses', (req, res) => {
     const b = req.body ?? {};
     const start = date(b.startDate, 'startDate');
     const givenEnd = b.endDate === undefined ? null : date(b.endDate, 'endDate');
-    if (givenEnd !== null && (givenEnd < start || givenEnd > today())) {
-      throw new HttpError(400, 'Дата окончания — между стартом и сегодня');
-    }
+    if (givenEnd !== null && givenEnd < start) throw new HttpError(400, 'Окончание раньше старта');
     if (!Array.isArray(b.prescriptionIds) || b.prescriptionIds.length === 0) {
       throw new HttpError(400, 'prescriptionIds: непустой массив');
     }

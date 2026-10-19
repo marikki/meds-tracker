@@ -29,6 +29,9 @@ function toRows(courses: HistoryCourse[]): Row[] {
   return [...map.values()];
 }
 
+/** Призначення; для комплексу — з препаратом, щоб бачити, кому з препаратів бракує курсу */
+type Rx = { id: number; personId: string; drugId?: number; drugName?: string };
+
 /**
  * Історія курсів препарату чи комплексу: перегляд, внесення минулого курсу,
  * правка дат і видалення. prescriptions — усі призначення (для комплексу — усіх його препаратів).
@@ -39,13 +42,15 @@ export function CourseHistory({
   target,
   prescriptions,
   courseDays,
+  title = 'История курсов',
   onChanged,
 }: {
   api: CoursesApi;
   people: Person[];
   target: { drugId: number } | { groupId: number };
-  prescriptions: { id: number; personId: string }[];
+  prescriptions: Rx[];
   courseDays: number;
+  title?: string;
   onChanged: () => void;
 }) {
   const [data, setData] = useState<{ today: string; courses: HistoryCourse[] } | null>(null);
@@ -63,6 +68,16 @@ export function CourseHistory({
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
   const peopleWith = people.filter((p) => prescriptions.some((x) => x.personId === p.id));
 
+  /**
+   * Призначення обраних людей, у яких у цьому рядку немає курсу: у комплексі курс
+   * міг потрапити не до всіх препаратів (внесли з одного препарату, препарат додали пізніше).
+   */
+  const missingIn = (r: Row, who: string[]) =>
+    'groupId' in target
+      ? prescriptions.filter((p) => who.includes(p.personId) && !r.courses.some((c) => c.prescriptionId === p.id))
+      : [];
+  const missingNames = (missing: Rx[]) => [...new Set(missing.map((p) => p.drugName ?? ''))].filter(Boolean).join(', ');
+
   const done = () => {
     setOpen(null);
     onChanged();
@@ -77,7 +92,7 @@ export function CourseHistory({
   return (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold">История курсов</h2>
+        <h2 className="text-lg font-bold">{title}</h2>
         {open !== 'new' && peopleWith.length > 0 && (
           <button type="button" onClick={() => setOpen('new')}
             className="-mr-2 flex h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-accent">
@@ -116,6 +131,7 @@ export function CourseHistory({
             const persons = [...new Set(r.courses.map((c) => c.personId))];
             const length = daysUntil(r.start, r.end) + 1;
             const state = r.start > t ? 'запланирован' : r.end >= t ? 'идёт сейчас' : '';
+            const missing = missingNames(missingIn(r, persons));
             return open === r.key ? (
               <div key={r.key} className="py-3">
                 <CourseEditor
@@ -127,11 +143,14 @@ export function CourseHistory({
                   initialEnd={r.end}
                   courseDays={courseDays}
                   submitLabel="Сохранить"
+                  note={missing ? `Курс добавится и для: ${missing}` : ''}
                   onCancel={() => setOpen(null)}
                   onSubmit={async ({ who, start, end }) => {
                     for (const c of r.courses.filter((c) => who.includes(c.personId))) {
                       await api.updateCourse(c.id, { startDate: start, endDate: end });
                     }
+                    const add = missingIn(r, who).map((p) => p.id);
+                    if (add.length > 0) await api.startCourses(start, add, end);
                     done();
                   }}
                   onDelete={async (who) => {
@@ -151,6 +170,7 @@ export function CourseHistory({
                     {length} {plural(length, DAYS)}
                     {state && <span className="font-medium text-accent"> · {state}</span>}
                   </span>
+                  {missing && <span className="text-sm font-medium text-due-ink">Нет у: {missing}</span>}
                 </span>
                 <span className="flex gap-1">
                   {people
@@ -179,6 +199,7 @@ function CourseEditor({
   initialEnd,
   courseDays,
   submitLabel,
+  note = '',
   onCancel,
   onSubmit,
   onDelete,
@@ -191,6 +212,8 @@ function CourseEditor({
   initialEnd: string;
   courseDays: number;
   submitLabel: string;
+  /** Пояснення під датами, напр. що курс допишеться іншим препаратам комплексу */
+  note?: string;
   onCancel: () => void;
   onSubmit: (v: { who: string[]; start: string; end: string }) => Promise<void>;
   onDelete?: (who: string[]) => Promise<void>;
@@ -261,6 +284,7 @@ function CourseEditor({
         {length > 0 ? `${length} ${plural(length, DAYS)}` : 'Укажите даты'}
         {isNew && ' · по схеме — ' + courseDays + ' ' + plural(courseDays, DAYS)}
       </p>
+      {note && <p className="text-[13px] font-medium text-due-ink">{note}</p>}
       {error && <p className="text-sm text-due-ink">{error}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={busy || invalid} onClick={() => run(() => onSubmit({ who, start, end }))}

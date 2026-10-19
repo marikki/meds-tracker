@@ -25,6 +25,12 @@ const label = 'flex flex-col gap-1 text-sm text-muted';
 
 type Editing = { drug: DrugWithPrescriptions | null } | { group: DrugGroup | null };
 
+/** Призначення всіх препаратів комплексу (за збереженим складом) — для його історії курсів */
+const groupPrescriptions = (drugs: DrugWithPrescriptions[], groupId: number) =>
+  drugs
+    .filter((d) => d.groupId === groupId && !d.archived)
+    .flatMap((d) => d.prescriptions.map((p) => ({ ...p, drugId: d.id, drugName: d.name })));
+
 /**
  * Форма препарату чи комплексу поверх іншого екрана (з «Сегодня»),
  * щоб не ходити через вкладку «Препараты».
@@ -489,14 +495,27 @@ function DrugForm({
     </form>
     {drug && (
       <div className="px-5 pb-8">
-        <CourseHistory
-          api={api}
-          people={people}
-          target={{ drugId: drug.id }}
-          prescriptions={drug.prescriptions}
-          courseDays={drug.courseDays}
-          onChanged={() => setHistoryChanged(true)}
-        />
+        {group ? (
+          // Препарати комплексу приймаються разом, тож і курси вносимо одразу на весь комплекс
+          <CourseHistory
+            api={api}
+            people={people}
+            target={{ groupId: group.id }}
+            prescriptions={groupPrescriptions(drugs, group.id)}
+            courseDays={group.courseDays}
+            title={`Курсы комплекса «${group.name}»`}
+            onChanged={() => setHistoryChanged(true)}
+          />
+        ) : (
+          <CourseHistory
+            api={api}
+            people={people}
+            target={{ drugId: drug.id }}
+            prescriptions={drug.prescriptions}
+            courseDays={drug.courseDays}
+            onChanged={() => setHistoryChanged(true)}
+          />
+        )}
       </div>
     )}
     </>
@@ -653,7 +672,7 @@ function GroupForm({
           people={people}
           target={{ groupId: group.id }}
           // Лише збережений склад: курси в історії — від нього
-          prescriptions={drugs.filter((d) => d.groupId === group.id && !d.archived).flatMap((d) => d.prescriptions)}
+          prescriptions={groupPrescriptions(drugs, group.id)}
           courseDays={group.courseDays}
           onChanged={() => setHistoryChanged(true)}
         />

@@ -173,8 +173,7 @@ describe('courses router', () => {
     })).json;
     const pids = (await call('GET', '/drugs')).json.find((d: any) => d.id === drug.id).prescriptions.map((p: any) => p.id);
 
-    // кінець у майбутньому чи раніше старту — не можна
-    expect((await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-10-20', prescriptionIds: pids })).status).toBe(400);
+    // кінець раніше старту — не можна
     expect((await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-02-01', prescriptionIds: pids })).status).toBe(400);
 
     const r = await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-04-10', prescriptionIds: pids });
