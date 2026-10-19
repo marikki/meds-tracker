@@ -4,7 +4,7 @@ import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
 import { EditCourse } from './EditCourse';
 import { StartCourse } from './StartCourse';
-import { daysUntil, shortDate } from './format';
+import { daysUntil, plural, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
 import { afterText, drugLines, groupByUnit, uniquePeople, unitKey, unitName } from './units';
 
@@ -15,7 +15,12 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [person, setPerson] = useState('all');
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
-  const [starting, setStarting] = useState(false);
+  // Відкритий екран «Начать курс»; preselected — призначення, позначені тут, у «Пора начинать»
+  const [starting, setStarting] = useState<{ preselected?: number[] } | null>(null);
+  // Позначені в «Пора начинать» одиниці (unitKey)
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [startError, setStartError] = useState('');
+  const [busy, setBusy] = useState(false);
   // Активний курс, відкритий для виправлення (призначення одного препарату чи комплексу)
   const [editing, setEditing] = useState<OverviewItem[] | null>(null);
   // Збільшується після старту курсів, щоб перечитати огляд
@@ -41,6 +46,30 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const t = data.today;
   const due = groupByUnit(data.items.filter((i) => i.forecast.status === 'due'));
   const active = groupByUnit(data.items.filter((i) => i.forecast.status === 'active'));
+  const chosen = due.filter((g) => picked.has(unitKey(g[0])));
+  const chosenIds = chosen.flatMap((g) => g.map((i) => i.prescriptionId));
+  const togglePick = (key: string) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  async function startToday() {
+    setBusy(true);
+    setStartError('');
+    try {
+      await api.startCourses(t, chosenIds);
+      setPicked(new Set());
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setStartError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const soon = groupByUnit(data.items.filter((i) => i.forecast.status === 'break')).sort((a, b) =>
     a[0].forecast.nextStartDate!.localeCompare(b[0].forecast.nextStartDate!),
   );
@@ -52,9 +81,13 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           api={api}
           people={people}
           initialPerson={person}
+          preselected={starting.preselected}
           onClose={(changed) => {
-            setStarting(false);
-            if (changed) setVersion((v) => v + 1);
+            setStarting(null);
+            if (changed) {
+              setPicked(new Set());
+              setVersion((v) => v + 1);
+            }
           }}
         />
       )}
@@ -83,8 +116,14 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           {due.map((g) => {
             const f = g[0].forecast;
             return (
-              <div key={unitKey(g[0])} className="flex items-center justify-between gap-3">
-                <div>
+              <label key={unitKey(g[0])} className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={picked.has(unitKey(g[0]))}
+                  onChange={() => togglePick(unitKey(g[0]))}
+                  className="size-[22px] shrink-0 accent-due"
+                />
+                <div className="min-w-0 flex-1">
                   <div className="font-semibold">{unitName(g[0])}</div>
                   <div className="text-sm text-due-ink">
                     {join(
@@ -98,12 +137,26 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                   </div>
                 </div>
                 {badges(g)}
-              </div>
+              </label>
             );
           })}
-          <button type="button" onClick={() => setStarting(true)} className="h-11 rounded-xl bg-due font-semibold text-white">
-            Начать курс
-          </button>
+          {startError && <p className="text-sm text-due-ink">{startError}</p>}
+          {chosen.length === 0 ? (
+            <button type="button" onClick={() => setStarting({})} className="h-11 rounded-xl bg-due font-semibold text-white">
+              Начать курс
+            </button>
+          ) : (
+            <>
+              <button type="button" disabled={busy} onClick={startToday}
+                className="h-11 rounded-xl bg-due font-semibold text-white disabled:opacity-60">
+                Начать {chosen.length} {plural(chosen.length, ['курс', 'курса', 'курсов'])} сегодня
+              </button>
+              <button type="button" onClick={() => setStarting({ preselected: chosenIds })}
+                className="self-center text-sm font-semibold text-due-ink">
+                Выбрать другую дату
+              </button>
+            </>
+          )}
         </section>
       )}
 

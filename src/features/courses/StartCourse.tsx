@@ -56,11 +56,14 @@ export function StartCourse({
   api,
   people,
   initialPerson,
+  preselected,
   onClose,
 }: {
   api: CoursesApi;
   people: Person[];
   initialPerson: string;
+  /** Призначення, вже позначені на «Сегодня»; без нього позначено все, що «пора починати» */
+  preselected?: number[];
   onClose: (changed: boolean) => void;
 }) {
   const [data, setData] = useState<Overview | null>(null);
@@ -76,8 +79,11 @@ export function StartCourse({
       setData(o);
       setStart(o.today);
       // Як у макеті: усе, що «пора починати», позначене заздалегідь
-      setSelected(new Set(o.items.filter((i) => i.forecast.status === 'due').map((i) => i.prescriptionId)));
+      setSelected(
+        new Set(preselected ?? o.items.filter((i) => i.forecast.status === 'due').map((i) => i.prescriptionId)),
+      );
     }, (e: Error) => setError(e.message));
+    // preselected потрібен лише при відкритті екрана, тому не в залежностях
   }, [api]);
 
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
