@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { Check } from './components/Check';
@@ -12,6 +13,8 @@ import { afterText, drugLines, groupByUnit, uniquePeople, unitKey, unitName } fr
 /** «через 12 дн.» + «после «Витамины B»» через крапку */
 const join = (...parts: string[]) => parts.filter(Boolean).join(' · ');
 
+const uniqueDrugs = (g: OverviewItem[]) => [...new Map(g.map((i) => [i.drug.id, i.drug])).values()];
+
 export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [person, setPerson] = useState('all');
   const [data, setData] = useState<Overview | null>(null);
@@ -20,6 +23,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [starting, setStarting] = useState<{ preselected?: number[] } | null>(null);
   // Позначені в «Пора начинать» одиниці (unitKey)
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Комплекси, розгорнуті до списку препаратів
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [startError, setStartError] = useState('');
   const [busy, setBusy] = useState(false);
   // Активний курс, відкритий для виправлення (призначення одного препарату чи комплексу)
@@ -49,13 +54,23 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const active = groupByUnit(data.items.filter((i) => i.forecast.status === 'active'));
   const chosen = due.filter((g) => picked.has(unitKey(g[0])));
   const chosenIds = chosen.flatMap((g) => g.map((i) => i.prescriptionId));
-  const togglePick = (key: string) =>
-    setPicked((s) => {
+  const toggleIn = (set: typeof setPicked) => (key: string) =>
+    set((s) => {
       const next = new Set(s);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+  const toggleExpanded = toggleIn(setExpanded);
+
+  /** Дозування препарату комплексу: одне на всіх або «Марина: … · Костя: …» */
+  const dosageOf = (g: OverviewItem[], drugId: number) => {
+    const rows = g.filter((i) => i.drug.id === drugId);
+    if (rows.every((r) => r.dosage === rows[0].dosage)) return rows[0].dosage;
+    return join(...rows.filter((r) => r.dosage).map((r) => `${byId.get(r.personId)?.p.name ?? r.personId}: ${r.dosage}`));
+  };
+
+  const togglePick = toggleIn(setPicked);
 
   async function startToday() {
     setBusy(true);
@@ -122,7 +137,7 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           {due.map((g) => {
             const f = g[0].forecast;
             const key = unitKey(g[0]);
-            const drugs = drugLines(g).length;
+            const drugs = uniqueDrugs(g).length;
             // Ржавим лише справжнє «пора», а не «ще не приймали»
             const when =
               f.nextStartDate === null
@@ -130,27 +145,57 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                 : f.overdueDays === 0
                   ? 'Перерыв закончился сегодня'
                   : `Перерыв закончился ${shortDate(f.nextStartDate, t)}`;
-            const rest = join(
-              g[0].group ? `${drugs} ${plural(drugs, ['препарат', 'препарата', 'препаратов'])}` : '',
-              when ? '' : 'Ещё не принимали',
-              afterText(g[0]),
-            );
+            const rest = join(when ? '' : 'Ещё не принимали', afterText(g[0]));
+            const open = expanded.has(key);
             return (
-              <label
+              <div
                 key={key}
-                className="flex cursor-pointer items-center gap-3.5 rounded-2xl bg-surface px-4 py-3 ring-1 ring-transparent transition-colors ring-inset has-checked:bg-due-soft has-checked:ring-due/35 motion-reduce:transition-none"
+                className="flex flex-col rounded-2xl bg-surface ring-1 ring-transparent transition-colors ring-inset has-checked:bg-due-soft has-checked:ring-due/35 motion-reduce:transition-none"
               >
-                <Check tone="due" checked={picked.has(key)} onChange={() => togglePick(key)} />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="font-semibold">{unitName(g[0])}</span>
-                  <span className="text-sm text-muted">
-                    {when && <span className="font-medium text-due-ink">{when}</span>}
-                    {when && rest && ' · '}
-                    {rest}
+                <label className={`flex cursor-pointer items-center gap-3.5 px-4 ${g[0].group ? 'pt-3 pb-1' : 'py-3'}`}>
+                  <Check tone="due" checked={picked.has(key)} onChange={() => togglePick(key)} />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="font-semibold">{unitName(g[0])}</span>
+                    <span className="text-sm text-muted">
+                      {when && <span className="font-medium text-due-ink">{when}</span>}
+                      {when && rest && ' · '}
+                      {rest}
+                    </span>
                   </span>
-                </span>
-                {badges(g)}
-              </label>
+                  {badges(g)}
+                </label>
+                {g[0].group && (
+                  // Окремо від label, щоб розгортання не перемикало галочку; 54px — відступ під текст рядка
+                  <div className="flex flex-col pr-4 pb-2 pl-[54px]">
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      onClick={() => toggleExpanded(key)}
+                      className="-ml-2 flex h-8 items-center gap-1 self-start rounded-lg px-2 text-sm font-medium text-accent"
+                    >
+                      {drugs} {plural(drugs, ['препарат', 'препарата', 'препаратов'])}
+                      <ChevronDown
+                        size={16}
+                        aria-hidden="true"
+                        className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    {open && (
+                      <ul className="mt-1 mb-1 flex flex-col gap-2 border-l-2 border-line pl-3">
+                        {uniqueDrugs(g).map((d) => {
+                          const dosage = dosageOf(g, d.id);
+                          return (
+                            <li key={d.id} className="flex flex-col">
+                              <span className="text-[15px] font-medium">{d.name}</span>
+                              {dosage && <span className="text-sm text-muted">{dosage}</span>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
           {startError && <p className="text-sm text-due-ink">{startError}</p>}
