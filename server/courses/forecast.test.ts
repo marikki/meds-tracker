@@ -33,7 +33,7 @@ describe('dates', () => {
 });
 
 describe('forecast', () => {
-  const magnesium: DrugScheme = { courseDays: 30, breakDays: 60, coursesPerYear: 3 };
+  const magnesium: DrugScheme = { courseDays: 30, breakDays: 60, coursesPerYear: 3, manualRepeat: false };
 
   it('курс на 30 днів закінчується на 30-й день включно', () => {
     expect(plannedEnd('2026-10-14', 30)).toBe('2026-11-12');
@@ -77,7 +77,7 @@ describe('forecast', () => {
   });
 
   it('без ліміту — тільки кінець + перерва', () => {
-    const noLimit = { ...magnesium, coursesPerYear: null };
+    const noLimit = { ...magnesium, coursesPerYear: null, manualRepeat: false };
     const c = [course('2026-01-05', 30), course('2026-04-05', 30), course('2026-07-05', 30)];
     expect(forecast(noLimit, c, '2026-10-14').nextStartDate).toBe('2026-10-03');
   });
@@ -90,7 +90,7 @@ describe('forecast', () => {
 });
 
 describe('починати після', () => {
-  const nmn: DrugScheme = { courseDays: 42, breakDays: 60, coursesPerYear: null };
+  const nmn: DrugScheme = { courseDays: 42, breakDays: 60, coursesPerYear: null, manualRepeat: false };
   const vitaminB = [course('2026-10-01', 90)]; // кінець 29.12
 
   it('ще не приймали, а попередник іде — чекаємо його кінця', () => {
@@ -123,9 +123,62 @@ describe('починати після', () => {
   });
 });
 
+describe('без строку і без автоповтору', () => {
+  const d3: DrugScheme = { courseDays: null, breakDays: 0, coursesPerYear: null, manualRepeat: true };
+  const open = (startDate: string, endedEarlyOn: string | null = null): CourseRecord => ({
+    startDate,
+    plannedEndDate: null,
+    endedEarlyOn,
+  });
+
+  it('курс без строку йде, кінця і наступного старту немає', () => {
+    const f = forecast(d3, [open('2026-10-01')], '2026-10-19');
+    expect(f).toMatchObject({ status: 'active', lastEndDate: null, nextStartDate: null });
+    expect(f.activeCourse).toMatchObject({ day: 19, totalDays: null, endDate: null });
+  });
+
+  it('завершили — done, а не «пора починати»', () => {
+    const f = forecast(d3, [open('2026-08-01', '2026-10-10')], '2026-10-19');
+    expect(f).toMatchObject({ status: 'done', lastEndDate: '2026-10-10', nextStartDate: null });
+  });
+
+  it('ще не приймали — пора починати', () => {
+    expect(forecast(d3, [], '2026-10-19').status).toBe('due');
+  });
+
+  it('фіксований курс без автоповтору після кінця — done', () => {
+    const scheme: DrugScheme = { courseDays: 20, breakDays: 0, coursesPerYear: null, manualRepeat: true };
+    const f = forecast(scheme, [course('2026-09-01', 20)], '2026-10-19');
+    expect(f).toMatchObject({ status: 'done', lastEndDate: '2026-09-20' });
+    // поки йде — наступного старту теж немає
+    expect(forecast(scheme, [course('2026-10-10', 20)], '2026-10-19').nextStartDate).toBeNull();
+  });
+
+  it('без строку з автоповтором: після завершення — перерва', () => {
+    const s: DrugScheme = { courseDays: null, breakDays: 30, coursesPerYear: null, manualRepeat: false };
+    expect(forecast(s, [open('2026-08-01', '2026-09-01')], '2026-09-15')).toMatchObject({
+      status: 'break',
+      nextStartDate: '2026-10-02',
+    });
+  });
+
+  it('попередник без строку ще йде — дата старту невідома', () => {
+    const nmn: DrugScheme = { courseDays: 42, breakDays: 60, coursesPerYear: null, manualRepeat: false };
+    expect(forecast(nmn, [], '2026-10-19', [open('2026-10-01')])).toMatchObject({ status: 'break', nextStartDate: null });
+  });
+
+  it('план: курс без строку — до кінця горизонту, без повторів', () => {
+    const p = project(d3, [open('2026-10-01')], '2026-10-19', '2026-10-01', '2026-12-31');
+    expect(p).toEqual([{ startDate: '2026-10-01', endDate: '2026-12-31', kind: 'actual' }]);
+    expect(project(d3, [], '2026-10-19', '2026-10-01', '2026-12-31')).toEqual([
+      { startDate: '2026-10-19', endDate: '2026-12-31', kind: 'forecast' },
+    ]);
+  });
+});
+
 describe('project', () => {
   it('фактичний курс + прогнозні до кінця горизонту', () => {
-    const scheme: DrugScheme = { courseDays: 20, breakDays: 90, coursesPerYear: 3 };
+    const scheme: DrugScheme = { courseDays: 20, breakDays: 90, coursesPerYear: 3, manualRepeat: false };
     const p = project(scheme, [course('2026-10-06', 20)], '2026-10-14', '2026-10-01', '2027-03-31');
     expect(p).toEqual([
       { startDate: '2026-10-06', endDate: '2026-10-25', kind: 'actual' },
@@ -134,7 +187,7 @@ describe('project', () => {
   });
 
   it('якщо пора — прогноз стартує сьогодні', () => {
-    const scheme: DrugScheme = { courseDays: 30, breakDays: 60, coursesPerYear: null };
+    const scheme: DrugScheme = { courseDays: 30, breakDays: 60, coursesPerYear: null, manualRepeat: false };
     const p = project(scheme, [], '2026-10-14', '2026-10-01', '2026-12-31');
     expect(p[0]).toEqual({ startDate: '2026-10-14', endDate: '2026-11-12', kind: 'forecast' });
   });

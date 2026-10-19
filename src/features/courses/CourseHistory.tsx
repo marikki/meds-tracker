@@ -14,14 +14,15 @@ const label = 'flex min-w-0 flex-col gap-1 text-sm text-muted';
 interface Row {
   key: string;
   start: string;
-  end: string;
+  /** null — курс без срока, ещё идёт */
+  end: string | null;
   courses: HistoryCourse[];
 }
 
 function toRows(courses: HistoryCourse[]): Row[] {
   const map = new Map<string, Row>();
   for (const c of courses) {
-    const key = `${c.startDate}|${c.endDate}`;
+    const key = `${c.startDate}|${c.endDate ?? 'open'}`;
     const row = map.get(key) ?? { key, start: c.startDate, end: c.endDate, courses: [] };
     row.courses.push(c);
     map.set(key, row);
@@ -49,7 +50,8 @@ export function CourseHistory({
   people: Person[];
   target: { drugId: number } | { groupId: number };
   prescriptions: Rx[];
-  courseDays: number;
+  /** null — без срока */
+  courseDays: number | null;
   title?: string;
   onChanged: () => void;
 }) {
@@ -129,8 +131,9 @@ export function CourseHistory({
         <div className="divide-y divide-line rounded-2xl bg-surface px-4">
           {rows.map((r) => {
             const persons = [...new Set(r.courses.map((c) => c.personId))];
-            const length = daysUntil(r.start, r.end) + 1;
-            const state = r.start > t ? 'запланирован' : r.end >= t ? 'идёт сейчас' : '';
+            // Курс без срока считаем по сегодня
+            const length = daysUntil(r.start, r.end ?? t) + 1;
+            const state = r.start > t ? 'запланирован' : r.end === null || r.end >= t ? 'идёт сейчас' : '';
             const missing = missingNames(missingIn(r, persons));
             return open === r.key ? (
               <div key={r.key} className="py-3">
@@ -140,17 +143,18 @@ export function CourseHistory({
                   people={people.filter((p) => persons.includes(p.id))}
                   initialWho={persons}
                   initialStart={r.start}
-                  initialEnd={r.end}
+                  initialEnd={r.end ?? ''}
                   courseDays={courseDays}
                   submitLabel="Сохранить"
                   note={missing ? `Курс добавится и для: ${missing}` : ''}
                   onCancel={() => setOpen(null)}
                   onSubmit={async ({ who, start, end }) => {
                     for (const c of r.courses.filter((c) => who.includes(c.personId))) {
-                      await api.updateCourse(c.id, { startDate: start, endDate: end });
+                      // Пустой конец у курса без срока — он продолжается
+                      await api.updateCourse(c.id, end ? { startDate: start, endDate: end } : { startDate: start });
                     }
                     const add = missingIn(r, who).map((p) => p.id);
-                    if (add.length > 0) await api.startCourses(start, add, end);
+                    if (add.length > 0) await api.startCourses(start, add, end || undefined);
                     done();
                   }}
                   onDelete={async (who) => {
@@ -164,7 +168,7 @@ export function CourseHistory({
                 className="flex w-full items-center gap-3 py-3 text-left">
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="font-semibold">
-                    {shortDate(r.start, t)} — {shortDate(r.end, t)}
+                    {shortDate(r.start, t)} — {r.end ? shortDate(r.end, t) : 'сейчас'}
                   </span>
                   <span className="text-sm text-muted">
                     {length} {plural(length, DAYS)}
@@ -209,8 +213,9 @@ function CourseEditor({
   people: Person[];
   initialWho: string[];
   initialStart: string;
+  /** '' — без конца: для нового курса его надо указать, у курса без срока можно оставить пустым */
   initialEnd: string;
-  courseDays: number;
+  courseDays: number | null;
   submitLabel: string;
   /** Пояснення під датами, напр. що курс допишеться іншим препаратам комплексу */
   note?: string;
@@ -229,7 +234,7 @@ function CourseEditor({
 
   function changeStart(v: string) {
     setStart(v);
-    if (!endTouched && v) {
+    if (!endTouched && v && courseDays !== null) {
       const planned = addDays(v, courseDays - 1);
       setEnd(planned > today ? today : planned);
     }
@@ -246,7 +251,10 @@ function CourseEditor({
     }
   }
 
-  const invalid = !start || !end || end < start || (isNew && end > today) || who.length === 0;
+  // Идущий курс без срока можно править, не задавая конец
+  const openAllowed = !isNew && initialEnd === '';
+  const invalid =
+    !start || (!end && !openAllowed) || (!!end && end < start) || (isNew && end > today) || who.length === 0;
   const length = start && end && end >= start ? daysUntil(start, end) + 1 : 0;
 
   return (
@@ -272,7 +280,7 @@ function CourseEditor({
         </label>
         <label className={label}>
           Последний день
-          <input type="date" value={end} min={start || undefined} max={isNew ? today : undefined} required
+          <input type="date" value={end} min={start || undefined} max={isNew ? today : undefined} required={!openAllowed}
             onChange={(e) => {
               setEnd(e.target.value);
               setEndTouched(true);
@@ -281,8 +289,12 @@ function CourseEditor({
         </label>
       </div>
       <p className="text-[13px] text-muted">
-        {length > 0 ? `${length} ${plural(length, DAYS)}` : 'Укажите даты'}
-        {isNew && ' · по схеме — ' + courseDays + ' ' + plural(courseDays, DAYS)}
+        {length > 0
+          ? `${length} ${plural(length, DAYS)}`
+          : openAllowed
+            ? 'Без срока — оставьте последний день пустым, пока курс идёт'
+            : 'Укажите даты'}
+        {isNew && courseDays !== null && ' · по схеме — ' + courseDays + ' ' + plural(courseDays, DAYS)}
       </p>
       {note && <p className="text-[13px] font-medium text-due-ink">{note}</p>}
       {error && <p className="text-sm text-due-ink">{error}</p>}
@@ -299,7 +311,8 @@ function CourseEditor({
       {onDelete && (
         <button type="button" disabled={busy || who.length === 0}
           onClick={() => {
-            if (window.confirm(`Удалить курс ${shortDate(initialStart, today)} — ${shortDate(initialEnd, today)}? Он исчезнет из истории.`)) {
+            const until = initialEnd ? shortDate(initialEnd, today) : 'сейчас';
+            if (window.confirm(`Удалить курс ${shortDate(initialStart, today)} — ${until}? Он исчезнет из истории.`)) {
               run(() => onDelete(who));
             }
           }}

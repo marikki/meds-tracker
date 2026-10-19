@@ -77,6 +77,36 @@ const migrations: { id: number; name: string; sql: string }[] = [
       ALTER TABLE drugs ADD COLUMN after_group_id INTEGER REFERENCES drug_groups(id) ON DELETE SET NULL;
     `,
   },
+  {
+    id: 3,
+    name: 'open_ended_and_manual_repeat',
+    sql: `
+      -- «Без строку»: курс іде, доки не завершать (course_days тоді не використовується).
+      -- «Не повторювати автоматично»: після курсу прогнозу немає, наступний — за рішенням.
+      ALTER TABLE drugs ADD COLUMN open_ended INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE drugs ADD COLUMN manual_repeat INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE drug_groups ADD COLUMN open_ended INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE drug_groups ADD COLUMN manual_repeat INTEGER NOT NULL DEFAULT 0;
+
+      -- Курс без строку не має планового кінця: перебудовуємо таблицю з nullable planned_end_date
+      CREATE TABLE courses_new (
+        id               INTEGER PRIMARY KEY,
+        prescription_id  INTEGER NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+        start_date       TEXT NOT NULL,
+        planned_end_date TEXT,                -- NULL — курс без строку
+        ended_early_on   TEXT,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK (planned_end_date IS NULL OR planned_end_date >= start_date),
+        CHECK (ended_early_on IS NULL OR (ended_early_on >= start_date
+               AND (planned_end_date IS NULL OR ended_early_on < planned_end_date)))
+      );
+      INSERT INTO courses_new (id, prescription_id, start_date, planned_end_date, ended_early_on, created_at)
+        SELECT id, prescription_id, start_date, planned_end_date, ended_early_on, created_at FROM courses;
+      DROP TABLE courses;
+      ALTER TABLE courses_new RENAME TO courses;
+      CREATE INDEX courses_prescription_start ON courses (prescription_id, start_date);
+    `,
+  },
 ];
 
 export function migrate(db: Database.Database): void {

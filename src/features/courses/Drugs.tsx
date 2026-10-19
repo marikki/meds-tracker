@@ -9,13 +9,17 @@ import type { Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Per
 
 const KIND_LABEL: Record<Drug['kind'], string> = { supplement: 'Добавка', peptide: 'Пептид' };
 
-type Scheme = Pick<Drug, 'courseDays' | 'breakDays' | 'coursesPerYear'>;
+type Scheme = Pick<Drug, 'courseDays' | 'breakDays' | 'coursesPerYear' | 'manualRepeat'>;
 type After = Pick<Drug, 'afterDrugId' | 'afterGroupId'>;
 
 /** «Добавка · курс 30 дн. · перерыв 60 дн. · до 2 в год · после «Витамины B»» */
 function schemeText(first: string, s: Scheme, after: string) {
-  const parts = [first, `курс ${s.courseDays} дн.`, s.breakDays ? `перерыв ${s.breakDays} дн.` : 'без перерыва'];
-  if (s.coursesPerYear) parts.push(`до ${s.coursesPerYear} в год`);
+  const parts = [
+    first,
+    s.courseDays === null ? 'без срока' : `курс ${s.courseDays} дн.`,
+    s.manualRepeat ? 'повтор по решению' : s.breakDays ? `перерыв ${s.breakDays} дн.` : 'без перерыва',
+  ];
+  if (s.coursesPerYear && !s.manualRepeat) parts.push(`до ${s.coursesPerYear} в год`);
   if (after) parts.push(`после «${after}»`);
   return parts.join(' · ');
 }
@@ -250,43 +254,65 @@ export function Drugs({ api, people }: { api: CoursesApi; people: Person[] }) {
 }
 
 /** Числа схеми: курс, перерва, курсів на рік (рядки — як у полях форми) */
-function SchemeFields({
-  value,
-  onChange,
-}: {
-  value: { courseDays: string; breakDays: string; coursesPerYear: string };
-  onChange: (v: { courseDays: string; breakDays: string; coursesPerYear: string }) => void;
-}) {
+type SchemeState = ReturnType<typeof schemeState>;
+
+/** Схема: курс, перерва, курсів на рік (рядки — як у полях форми) і два прапорці */
+function SchemeFields({ value, onChange }: { value: SchemeState; onChange: (v: SchemeState) => void }) {
+  const set = (patch: Partial<SchemeState>) => onChange({ ...value, ...patch });
   return (
-    <div className="grid grid-cols-3 gap-2">
-      <label className={label}>
-        Курс, дней
-        <input type="number" inputMode="numeric" min={1} required value={value.courseDays}
-          onChange={(e) => onChange({ ...value, courseDays: e.target.value })} className={field} />
-      </label>
-      <label className={label}>
-        Перерыв, дней
-        <input type="number" inputMode="numeric" min={0} placeholder="0" value={value.breakDays}
-          onChange={(e) => onChange({ ...value, breakDays: e.target.value })} className={field} />
-      </label>
-      <label className={label}>
-        Курсов в год
-        <input type="number" inputMode="numeric" min={1} placeholder="—" value={value.coursesPerYear}
-          onChange={(e) => onChange({ ...value, coursesPerYear: e.target.value })} className={field} />
-      </label>
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-2">
+        <label className={label}>
+          Курс, дней
+          <input type="number" inputMode="numeric" min={1} required={!value.open} disabled={value.open}
+            placeholder={value.open ? '—' : ''} value={value.open ? '' : value.courseDays}
+            onChange={(e) => set({ courseDays: e.target.value })} className={`${field} disabled:opacity-50`} />
+        </label>
+        <label className={label}>
+          Перерыв, дней
+          <input type="number" inputMode="numeric" min={0} placeholder={value.manual ? '—' : '0'} disabled={value.manual}
+            value={value.manual ? '' : value.breakDays}
+            onChange={(e) => set({ breakDays: e.target.value })} className={`${field} disabled:opacity-50`} />
+        </label>
+        <label className={label}>
+          Курсов в год
+          <input type="number" inputMode="numeric" min={1} placeholder="—" disabled={value.manual}
+            value={value.manual ? '' : value.coursesPerYear}
+            onChange={(e) => set({ coursesPerYear: e.target.value })} className={`${field} disabled:opacity-50`} />
+        </label>
+      </div>
+      <div className="flex flex-col gap-2.5 rounded-xl bg-surface px-3 py-3">
+        <label className="flex cursor-pointer items-start gap-3">
+          <Check checked={value.open} onChange={() => set({ open: !value.open })} />
+          <span className="flex flex-col">
+            <span className="font-medium">Без срока</span>
+            <span className="text-[13px] text-muted">Принимать, пока не завершите курс вручную</span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-3">
+          <Check checked={value.manual} onChange={() => set({ manual: !value.manual })} />
+          <span className="flex flex-col">
+            <span className="font-medium">Не повторять автоматически</span>
+            <span className="text-[13px] text-muted">После курса — «завершён», следующий по решению врача</span>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }
 
 const schemeState = (s: Scheme | null) => ({
-  courseDays: s ? String(s.courseDays) : '',
+  courseDays: s?.courseDays ? String(s.courseDays) : '',
   breakDays: s ? String(s.breakDays) : '',
   coursesPerYear: s?.coursesPerYear ? String(s.coursesPerYear) : '',
+  open: s ? s.courseDays === null : false,
+  manual: s?.manualRepeat ?? false,
 });
-const schemeInput = (s: ReturnType<typeof schemeState>): Scheme => ({
-  courseDays: Number(s.courseDays),
+const schemeInput = (s: SchemeState): Scheme => ({
+  courseDays: s.open ? null : Number(s.courseDays),
   breakDays: Number(s.breakDays || 0),
   coursesPerYear: s.coursesPerYear ? Number(s.coursesPerYear) : null,
+  manualRepeat: s.manual,
 });
 
 /** Значення селекта «Начинать после»: '' | 'd:12' | 'g:3' */

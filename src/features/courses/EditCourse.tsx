@@ -51,7 +51,8 @@ export function EditCourse({
   const name = (i: OverviewItem) => byId.get(i.personId)?.p.name ?? i.personId;
   const chosen = items.filter((i) => who.has(i.prescriptionId));
   const totalDays = (chosen[0] ?? items[0]).forecast.activeCourse!.totalDays;
-  const newEnd = addDays(start, totalDays - 1);
+  // null — курс без срока: конца нет, пока его не завершат
+  const newEnd = totalDays === null ? null : addDays(start, totalDays - 1);
   const latestStart = chosen.map((i) => i.forecast.activeCourse!.startDate).sort().at(-1) ?? today;
   const startChanged = chosen.some((i) => i.forecast.activeCourse!.startDate !== start);
 
@@ -127,7 +128,10 @@ export function EditCourse({
                       {manyDrugs && <span className="text-[15px] font-semibold">{i.drug.name}</span>}
                     </span>
                     <span className="text-[13px] text-muted">
-                      с {shortDate(a.startDate, today)} · день {a.day} из {a.totalDays} · до {shortDate(a.endDate, today)}
+                      с {shortDate(a.startDate, today)} · день {a.day}
+                      {a.endDate === null
+                        ? ' · без срока'
+                        : `${a.totalDays === null ? '' : ` из ${a.totalDays}`} · до ${shortDate(a.endDate, today)}`}
                     </span>
                   </span>
                 );
@@ -152,7 +156,9 @@ export function EditCourse({
                   onChange={(e) => e.target.value && setStart(e.target.value)} className={field} />
               </label>
               <p className="text-[13px] text-muted">
-                Курс {totalDays} дн. — закончится {shortDate(newEnd, today)}
+                {newEnd === null
+                  ? 'Курс без срока — идёт, пока его не завершите'
+                  : `Курс ${totalDays} дн. — закончится ${shortDate(newEnd, today)}`}
               </p>
               <button type="button" disabled={disabled || !startChanged}
                 onClick={() => apply((c) => api.updateCourse(c.id, { startDate: start }))}
@@ -163,7 +169,9 @@ export function EditCourse({
           </section>
 
           <section className="flex flex-col gap-2">
-            <h2 className="text-[13px] font-semibold tracking-wider text-muted uppercase">Завершить досрочно</h2>
+            <h2 className="text-[13px] font-semibold tracking-wider text-muted uppercase">
+              {newEnd === null ? 'Завершить курс' : 'Завершить досрочно'}
+            </h2>
             <div className="flex flex-col gap-3 rounded-2xl bg-surface p-4">
               <label className="flex items-center justify-between gap-3">
                 <span className="text-[15px] text-muted">Последний день</span>

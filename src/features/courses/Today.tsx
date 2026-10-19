@@ -28,6 +28,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [starting, setStarting] = useState<{ preselected?: number[] } | null>(null);
   // Позначені в «Пора начинать» одиниці (unitKey)
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Блок «Завершённые» (повтор лише за рішенням) за замовчуванням згорнутий
+  const [showDone, setShowDone] = useState(false);
   // Комплекси, розгорнуті до списку препаратів
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [startError, setStartError] = useState('');
@@ -95,8 +97,12 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
     }
   }
 
+  // Без даты (ждём попередника без срока) — в конец списка
   const soon = groupByUnit(data.items.filter((i) => i.forecast.status === 'break')).sort((a, b) =>
-    a[0].forecast.nextStartDate!.localeCompare(b[0].forecast.nextStartDate!),
+    (a[0].forecast.nextStartDate ?? '9999').localeCompare(b[0].forecast.nextStartDate ?? '9999'),
+  );
+  const done = groupByUnit(data.items.filter((i) => i.forecast.status === 'done')).sort((a, b) =>
+    (b[0].forecast.lastEndDate ?? '').localeCompare(a[0].forecast.lastEndDate ?? ''),
   );
 
   return (
@@ -280,13 +286,22 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                 </div>
                 {badges(g)}
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-track">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${(c.day / c.totalDays) * 100}%` }} />
-              </div>
-              <div className="flex justify-between text-sm text-muted">
-                <span>День {c.day} из {c.totalDays}</span>
-                <span>до {shortDate(c.endDate, t)}</span>
-              </div>
+              {c.totalDays !== null && c.endDate !== null ? (
+                <>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-track">
+                    <div className="h-full rounded-full bg-accent" style={{ width: `${(c.day / c.totalDays) * 100}%` }} />
+                  </div>
+                  <div className="flex justify-between text-sm text-muted">
+                    <span>День {c.day} из {c.totalDays}</span>
+                    <span>до {shortDate(c.endDate, t)}</span>
+                  </div>
+                </>
+              ) : (
+                // Без срока: шкалы нет — только сколько уже идёт (и последний день, если уже завершили)
+                <div className="text-sm text-muted">
+                  День {c.day} · {c.endDate ? `последний день ${shortDate(c.endDate, t)}` : 'без срока'}
+                </div>
+              )}
             </button>
           );
         })}
@@ -297,20 +312,49 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           <h2 className="text-lg font-bold">Ближайшие старты</h2>
           <div className="divide-y divide-line rounded-2xl bg-surface px-4">
             {soon.map((g) => {
-              const next = g[0].forecast.nextStartDate!;
+              const next = g[0].forecast.nextStartDate;
               return (
                 <button key={unitKey(g[0])} type="button" onClick={() => setOpened(unitTarget(g[0]))}
                   className="flex w-full items-center gap-3.5 py-3 text-left">
-                  <span className="w-14 shrink-0 text-sm font-semibold">{shortDate(next, t)}</span>
+                  <span className="w-14 shrink-0 text-sm font-semibold">{next ? shortDate(next, t) : '—'}</span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="font-semibold">{unitName(g[0])}</span>
-                    <span className="text-sm text-muted">{join(`через ${daysUntil(t, next)} дн.`, afterText(g[0]))}</span>
+                    <span className="text-sm text-muted">
+                      {next ? join(`через ${daysUntil(t, next)} дн.`, afterText(g[0])) : `Когда закончится «${g[0].after?.name}»`}
+                    </span>
                   </span>
                   {badges(g)}
                 </button>
               );
             })}
           </div>
+        </section>
+      )}
+
+      {done.length > 0 && (
+        <section className="flex flex-col gap-2.5">
+          <button type="button" aria-expanded={showDone} onClick={() => setShowDone((v) => !v)}
+            className="flex items-center gap-1 self-start text-lg font-bold">
+            Завершённые · {done.length}
+            <ChevronDown size={20} aria-hidden="true"
+              className={`text-muted transition-transform motion-reduce:transition-none ${showDone ? 'rotate-180' : ''}`} />
+          </button>
+          {showDone && (
+            <div className="divide-y divide-line rounded-2xl bg-surface px-4">
+              {done.map((g) => (
+                <button key={unitKey(g[0])} type="button" onClick={() => setOpened(unitTarget(g[0]))}
+                  className="flex w-full items-center gap-3.5 py-3 text-left">
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="font-semibold">{unitName(g[0])}</span>
+                    <span className="text-sm text-muted">
+                      Закончили {shortDate(g[0].forecast.lastEndDate!, t)} · повтор по решению
+                    </span>
+                  </span>
+                  {badges(g)}
+                </button>
+              ))}
+            </div>
+          )}
         </section>
       )}
     </div>

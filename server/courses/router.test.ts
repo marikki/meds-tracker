@@ -198,4 +198,34 @@ describe('courses router', () => {
     const vitB = groups.find((g: any) => g.name === 'Витамины B');
     expect((await call('GET', `/history?group=${vitB.id}`)).json.courses.length).toBeGreaterThan(0);
   });
+
+  it('препарат без строку: курс без кінця, завершення вручну, потім done', async () => {
+    const d3 = await call('POST', '/drugs', {
+      name: 'Витамин D3', kind: 'supplement', courseDays: null, breakDays: 0, manualRepeat: true,
+      prescriptions: [{ personId: 'marina', dosage: '5000 МЕ' }],
+    });
+    expect(d3.status).toBe(201);
+    expect(d3.json).toMatchObject({ courseDays: null, manualRepeat: true });
+    const pid = (await call('GET', '/drugs')).json.find((d: any) => d.id === d3.json.id).prescriptions[0].id;
+
+    const started = await call('POST', '/courses', { startDate: '2026-09-01', prescriptionIds: [pid] });
+    expect(started.json[0].planned_end_date).toBeNull();
+    let item = (await call('GET', '/overview?person=marina')).json.items.find((i: any) => i.prescriptionId === pid);
+    expect(item.forecast).toMatchObject({ status: 'active', nextStartDate: null });
+    expect(item.forecast.activeCourse).toMatchObject({ day: 44, totalDays: null, endDate: null });
+    expect((await call('GET', `/history?drug=${d3.json.id}`)).json.courses[0].endDate).toBeNull();
+    // перетин з курсом без строку
+    expect((await call('POST', '/courses', { startDate: '2027-05-01', prescriptionIds: [pid] })).status).toBe(409);
+
+    // завершити вручну
+    const id = started.json[0].id;
+    expect((await call('PATCH', `/courses/${id}`, { endedEarlyOn: '2026-10-10' })).status).toBe(200);
+    item = (await call('GET', '/overview?person=marina')).json.items.find((i: any) => i.prescriptionId === pid);
+    expect(item.forecast).toMatchObject({ status: 'done', lastEndDate: '2026-10-10', nextStartDate: null });
+
+    // повернути строк: курс знову має тривалість зі схеми
+    const back = await call('PATCH', `/drugs/${d3.json.id}`, { courseDays: 56 });
+    expect(back.json).toMatchObject({ courseDays: 56, manualRepeat: true });
+    expect((await call('PATCH', `/drugs/${d3.json.id}`, { manualRepeat: 'yes' })).status).toBe(400);
+  });
 });

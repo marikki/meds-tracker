@@ -15,7 +15,8 @@ interface Row {
   /** busy — у цю дату вже йде курс, стартувати не можна; early — раніше кінця перерви */
   kind: 'normal' | 'early' | 'busy';
   info: string;
-  end: string;
+  /** null — курс без срока */
+  end: string | null;
 }
 
 /**
@@ -26,12 +27,14 @@ function buildRows(items: OverviewItem[], start: string, today: string) {
   const groups = new Map<string, Row & { due: boolean }>();
   for (const i of items) {
     const f = i.forecast;
-    const end = addDays(start, i.drug.courseDays - 1);
+    const days = i.drug.courseDays;
+    const end = days === null ? null : addDays(start, days - 1);
     let kind: Row['kind'] = 'normal';
-    let info = `${i.drug.courseDays} ${plural(i.drug.courseDays, DAYS)} · закончится ${shortDate(end, today)}`;
-    if (f.activeCourse && start <= f.activeCourse.endDate) {
+    let info = end === null ? 'Без срока' : `${days} ${plural(days!, DAYS)} · закончится ${shortDate(end, today)}`;
+    const activeEnd = f.activeCourse ? f.activeCourse.endDate : null;
+    if (f.activeCourse && (activeEnd === null || start <= activeEnd)) {
       kind = 'busy';
-      info = `Курс уже идёт, до ${shortDate(f.activeCourse.endDate, today)}`;
+      info = activeEnd === null ? 'Курс уже идёт, без срока' : `Курс уже идёт, до ${shortDate(activeEnd, today)}`;
     } else if (f.nextStartDate && start < f.nextStartDate) {
       const n = daysUntil(start, f.nextStartDate);
       kind = 'early';
@@ -200,7 +203,9 @@ export function StartCourse({
           <p className="text-sm text-muted">
             {n === 0
               ? 'Отметьте, что начинаете'
-              : chosen.map((r) => `${unitName(r.items[0])} — ${names(r)}, до ${shortDate(r.end, data!.today)}`).join(' · ')}
+              : chosen
+                  .map((r) => `${unitName(r.items[0])} — ${names(r)}, ${r.end ? `до ${shortDate(r.end, data!.today)}` : 'без срока'}`)
+                  .join(' · ')}
           </p>
           {error && <p className="text-sm text-due-ink">{error}</p>}
           <button

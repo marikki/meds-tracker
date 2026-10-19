@@ -1,7 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import { diffDays, isISODate, todayIn, type ISODate } from './dates';
-import { endOf, forecast, plannedEnd, project, type CourseRecord, type DrugScheme } from './forecast';
+import { endOf, FOREVER, forecast, plannedEnd, project, type CourseRecord, type DrugScheme } from './forecast';
 
 /**
  * Роутер модуля. Авторизацію робить хост (окремий застосунок або FamilyHub)
@@ -34,6 +34,10 @@ function str(v: unknown, field: string, { required = false } = {}): string {
   if (typeof v !== 'string' || (required && !v.trim())) throw new HttpError(400, `${field}: нужен текст`);
   return v.trim();
 }
+function bool(v: unknown, field: string): boolean {
+  if (typeof v !== 'boolean') throw new HttpError(400, `${field}: true | false`);
+  return v;
+}
 function date(v: unknown, field: string): ISODate {
   if (!isISODate(v)) throw new HttpError(400, `${field}: дата в формате YYYY-MM-DD`);
   return v;
@@ -52,6 +56,8 @@ interface DrugRow {
   group_id: number | null;
   after_drug_id: number | null;
   after_group_id: number | null;
+  open_ended: number;
+  manual_repeat: number;
 }
 interface GroupRow {
   id: number;
@@ -61,6 +67,8 @@ interface GroupRow {
   courses_per_year: number | null;
   after_drug_id: number | null;
   after_group_id: number | null;
+  open_ended: number;
+  manual_repeat: number;
   notes: string;
 }
 interface PrescriptionRow {
@@ -73,15 +81,20 @@ interface CourseRow {
   id: number;
   prescription_id: number;
   start_date: string;
-  planned_end_date: string;
+  planned_end_date: string | null;
   ended_early_on: string | null;
 }
 
-const scheme = (d: DrugRow): DrugScheme => ({
-  courseDays: d.course_days,
+/** Схема для відповіді й розрахунку: courseDays = null — без строку */
+type SchemeRow = Pick<DrugRow, 'course_days' | 'break_days' | 'courses_per_year' | 'open_ended' | 'manual_repeat'>;
+const scheme = (d: SchemeRow): DrugScheme => ({
+  courseDays: d.open_ended ? null : d.course_days,
   breakDays: d.break_days,
   coursesPerYear: d.courses_per_year,
+  manualRepeat: d.manual_repeat === 1,
 });
+/** Кінець курсу для показу: FOREVER (без строку, ще йде) → «…» */
+const endText = (c: CourseRow) => (endOf(toRecord(c)) === FOREVER ? '…' : endOf(toRecord(c)));
 const toRecord = (c: CourseRow): CourseRecord => ({
   startDate: c.start_date,
   plannedEndDate: c.planned_end_date,
@@ -91,9 +104,7 @@ const drugDto = (d: DrugRow) => ({
   id: d.id,
   name: d.name,
   kind: d.kind,
-  courseDays: d.course_days,
-  breakDays: d.break_days,
-  coursesPerYear: d.courses_per_year,
+  ...scheme(d),
   notes: d.notes,
   archived: d.archived_at !== null,
   groupId: d.group_id,
@@ -103,19 +114,29 @@ const drugDto = (d: DrugRow) => ({
 const groupDto = (g: GroupRow, drugIds: number[]) => ({
   id: g.id,
   name: g.name,
-  courseDays: g.course_days,
-  breakDays: g.break_days,
-  coursesPerYear: g.courses_per_year,
+  ...scheme(g),
   afterDrugId: g.after_drug_id,
   afterGroupId: g.after_group_id,
   notes: g.notes,
   drugIds,
 });
 
-/** Схема з тіла запиту; поля, яких немає, беруться з current. */
-function readScheme(b: Record<string, unknown>, current?: Pick<GroupRow, 'course_days' | 'break_days' | 'courses_per_year'>) {
+/**
+ * Схема з тіла запиту; поля, яких немає, беруться з current.
+ * courseDays: null — без строку (course_days лишається як був, щоб повернути при знятті прапорця).
+ */
+function readScheme(b: Record<string, unknown>, current?: SchemeRow) {
+  const open = b.courseDays === undefined && current ? current.open_ended === 1 : b.courseDays === null;
   return {
-    course_days: b.courseDays === undefined && current ? current.course_days : int(b.courseDays, 'courseDays', 1),
+    open_ended: open ? 1 : 0,
+    manual_repeat:
+      b.manualRepeat === undefined ? (current?.manual_repeat ?? 0) : bool(b.manualRepeat, 'manualRepeat') ? 1 : 0,
+    course_days:
+      (b.courseDays === undefined || b.courseDays === null) && current
+        ? current.course_days
+        : b.courseDays === null
+          ? 1
+          : int(b.courseDays, 'courseDays', 1),
     break_days: b.breakDays === undefined && current ? current.break_days : int(b.breakDays, 'breakDays', 0),
     courses_per_year:
       b.coursesPerYear === undefined && current
@@ -206,7 +227,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       (c) => c.id !== exceptId && c.start_date <= end && endOf(toRecord(c)) >= start,
     );
     if (clash) {
-      throw new HttpError(409, `Пересекается с курсом ${clash.start_date} — ${endOf(toRecord(clash))}`);
+      throw new HttpError(409, `Пересекается с курсом ${clash.start_date} — ${endText(clash)}`);
     }
   }
 
@@ -253,9 +274,10 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
   /** Копіює схему і «починати після» комплексу в усі його препарати. */
   function syncGroup(groupId: number) {
     const g = q.group.get(groupId) as GroupRow;
-    db.prepare(`UPDATE drugs SET course_days = ?, break_days = ?, courses_per_year = ?,
-                after_drug_id = ?, after_group_id = ? WHERE group_id = ?`)
-      .run(g.course_days, g.break_days, g.courses_per_year, g.after_drug_id, g.after_group_id, groupId);
+    db.prepare(`UPDATE drugs SET course_days = ?, break_days = ?, courses_per_year = ?, open_ended = ?,
+                manual_repeat = ?, after_drug_id = ?, after_group_id = ? WHERE group_id = ?`)
+      .run(g.course_days, g.break_days, g.courses_per_year, g.open_ended, g.manual_repeat,
+        g.after_drug_id, g.after_group_id, groupId);
   }
 
   function writeMembers(groupId: number, list: unknown) {
@@ -318,8 +340,10 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       assertUniqueName(name);
       const after = readAfter(b, { after_drug_id: null, after_group_id: null }, {});
       const info = db
-        .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, notes, after_drug_id, after_group_id)
-                  VALUES (@name, @kind, @course_days, @break_days, @courses_per_year, @notes, @after_drug_id, @after_group_id)`)
+        .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, open_ended, manual_repeat,
+                    notes, after_drug_id, after_group_id)
+                  VALUES (@name, @kind, @course_days, @break_days, @courses_per_year, @open_ended, @manual_repeat,
+                    @notes, @after_drug_id, @after_group_id)`)
         .run({ name, kind, ...readScheme(b), notes: str(b.notes, 'notes'), ...after });
       const drugId = Number(info.lastInsertRowid);
       writePrescriptions(drugId, b.prescriptions ?? []);
@@ -346,7 +370,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       if (!KINDS.includes(next.kind)) throw new HttpError(400, `kind: ${KINDS.join(' | ')}`);
       assertUniqueName(next.name, id);
       db.prepare(`UPDATE drugs SET name=@name, kind=@kind, course_days=@course_days, break_days=@break_days,
-                  courses_per_year=@courses_per_year, after_drug_id=@after_drug_id, after_group_id=@after_group_id,
+                  courses_per_year=@courses_per_year, open_ended=@open_ended, manual_repeat=@manual_repeat,
+                  after_drug_id=@after_drug_id, after_group_id=@after_group_id,
                   notes=@notes, archived_at=@archived_at WHERE id=@id`)
         .run({ ...next, id });
       if (b.prescriptions !== undefined) writePrescriptions(id, b.prescriptions);
@@ -372,8 +397,10 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       const name = str(b.name, 'name', { required: true });
       assertUniqueGroupName(name);
       const info = db
-        .prepare(`INSERT INTO drug_groups (name, course_days, break_days, courses_per_year, after_drug_id, after_group_id, notes)
-                  VALUES (@name, @course_days, @break_days, @courses_per_year, @after_drug_id, @after_group_id, @notes)`)
+        .prepare(`INSERT INTO drug_groups (name, course_days, break_days, courses_per_year, open_ended, manual_repeat,
+                    after_drug_id, after_group_id, notes)
+                  VALUES (@name, @course_days, @break_days, @courses_per_year, @open_ended, @manual_repeat,
+                    @after_drug_id, @after_group_id, @notes)`)
         .run({
           name,
           ...readScheme(b),
@@ -400,7 +427,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       assertUniqueGroupName(name, id);
       if (b.drugIds !== undefined) writeMembers(id, b.drugIds);
       db.prepare(`UPDATE drug_groups SET name=@name, course_days=@course_days, break_days=@break_days,
-                  courses_per_year=@courses_per_year, after_drug_id=@after_drug_id, after_group_id=@after_group_id,
+                  courses_per_year=@courses_per_year, open_ended=@open_ended, manual_repeat=@manual_repeat,
+                  after_drug_id=@after_drug_id, after_group_id=@after_group_id,
                   notes=@notes WHERE id=@id`)
         .run({
           id,
@@ -485,8 +513,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         const p = q.prescription.get(pid) as PrescriptionRow | undefined;
         if (!p) throw new HttpError(404, `Назначение ${pid} не найдено`);
         const d = q.drug.get(p.drug_id) as DrugRow;
-        const end = givenEnd ?? plannedEnd(start, d.course_days);
-        assertNoOverlap(pid, start, end);
+        const end = givenEnd ?? plannedEnd(start, scheme(d).courseDays);
+        assertNoOverlap(pid, start, end ?? FOREVER);
         const info = db
           .prepare('INSERT INTO courses (prescription_id, start_date, planned_end_date) VALUES (?, ?, ?)')
           .run(pid, start, end);
@@ -517,18 +545,18 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       );
       return res.json(q.course.get(id));
     }
-    // Тривалість зафіксована в самому курсі: зміна схеми в довіднику її не чіпає
-    const courseDays = diffDays(c.start_date, c.planned_end_date) + 1;
+    // Тривалість зафіксована в самому курсі: зміна схеми в довіднику її не чіпає; null — без строку
+    const courseDays = c.planned_end_date === null ? null : diffDays(c.start_date, c.planned_end_date) + 1;
     const plannedEndDate = plannedEnd(start, courseDays);
     const endedEarlyOn =
       b.endedEarlyOn === undefined ? c.ended_early_on : b.endedEarlyOn === null ? null : date(b.endedEarlyOn, 'endedEarlyOn');
-    if (endedEarlyOn !== null && (endedEarlyOn < start || endedEarlyOn >= plannedEndDate)) {
+    if (endedEarlyOn !== null && (endedEarlyOn < start || (plannedEndDate !== null && endedEarlyOn >= plannedEndDate))) {
       throw new HttpError(400, 'Дата досрочного завершения должна быть между стартом и плановым концом');
     }
     if (endedEarlyOn !== null && endedEarlyOn > today()) {
       throw new HttpError(400, 'Завершить досрочно можно только сегодняшней или прошедшей датой');
     }
-    assertNoOverlap(c.prescription_id, start, endedEarlyOn ?? plannedEndDate, id);
+    assertNoOverlap(c.prescription_id, start, endedEarlyOn ?? plannedEndDate ?? FOREVER, id);
     db.prepare('UPDATE courses SET start_date = ?, planned_end_date = ?, ended_early_on = ? WHERE id = ?').run(
       start,
       plannedEndDate,
@@ -568,7 +596,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         drugId: c.drug_id,
         drugName: c.drug_name,
         startDate: c.start_date,
-        endDate: endOf(toRecord(c)),
+        // null — курс без строку, ще йде
+        endDate: endOf(toRecord(c)) === FOREVER ? null : endOf(toRecord(c)),
       })),
     });
   });

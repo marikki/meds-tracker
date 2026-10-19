@@ -1,6 +1,7 @@
 // Відповіді API модуля (див. server/courses/router.ts)
 export type ISODate = string;
-export type Status = 'active' | 'due' | 'break';
+/** done — курс закінчився, а повтор лише за рішенням (manualRepeat) */
+export type Status = 'active' | 'due' | 'break' | 'done';
 
 export interface Person { id: string; name: string }
 
@@ -8,9 +9,12 @@ export interface Drug {
   id: number;
   name: string;
   kind: 'supplement' | 'peptide';
-  courseDays: number;
+  /** null — без срока: курс идёт, пока его не завершат */
+  courseDays: number | null;
   breakDays: number;
   coursesPerYear: number | null;
+  /** Не повторять автоматически: после курса — «завершён», а не «пора начинать» */
+  manualRepeat: boolean;
   notes: string;
   archived: boolean;
   /** Комплекс; схема і afterDrugId/afterGroupId тоді скопійовані з нього */
@@ -23,9 +27,10 @@ export interface Drug {
 export interface DrugGroup {
   id: number;
   name: string;
-  courseDays: number;
+  courseDays: number | null;
   breakDays: number;
   coursesPerYear: number | null;
+  manualRepeat: boolean;
   afterDrugId: number | null;
   afterGroupId: number | null;
   notes: string;
@@ -44,9 +49,10 @@ export interface DrugWithPrescriptions extends Drug { prescriptions: DrugPrescri
 export interface DrugInput {
   name: string;
   kind: Drug['kind'];
-  courseDays: number;
+  courseDays: number | null;
   breakDays: number;
   coursesPerYear: number | null;
+  manualRepeat: boolean;
   afterDrugId: number | null;
   afterGroupId: number | null;
   notes: string;
@@ -58,7 +64,8 @@ export interface CourseRow {
   id: number;
   prescription_id: number;
   start_date: ISODate;
-  planned_end_date: ISODate;
+  /** null — курс без срока */
+  planned_end_date: ISODate | null;
   ended_early_on: ISODate | null;
 }
 
@@ -70,13 +77,14 @@ export interface HistoryCourse {
   drugId: number;
   drugName: string;
   startDate: ISODate;
-  /** Фактичний кінець (з урахуванням дострокового) */
-  endDate: ISODate;
+  /** Фактичний кінець (з урахуванням дострокового); null — без строку, ще йде */
+  endDate: ISODate | null;
 }
 
 export interface Forecast {
   status: Status;
-  activeCourse: { startDate: ISODate; endDate: ISODate; day: number; totalDays: number } | null;
+  /** endDate и totalDays — null, если курс без срока */
+  activeCourse: { startDate: ISODate; endDate: ISODate | null; day: number; totalDays: number | null } | null;
   lastEndDate: ISODate | null;
   nextStartDate: ISODate | null;
   overdueDays: number;
