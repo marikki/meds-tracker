@@ -77,6 +77,32 @@ function sortKey(u: Unit, today: string): string {
   return next ? `1${next}` : '2';
 }
 
+/**
+ * Підпис доріжки словами: що зараз і що далі.
+ * «Пора начинать» — прогноз, що стартує сьогодні: перерву вже закінчено (або ще не приймали).
+ */
+function summary(courses: PlanCourse[], plan: Plan): { text: string; due: boolean } {
+  const t = plan.today;
+  const d = (x: string) => shortDate(x, t);
+  const cur = courses.find((c) => c.kind === 'actual' && c.startDate <= t && c.endDate >= t);
+  const next = courses.find((c) => c.kind === 'forecast' && c.startDate > t);
+  const nextText = next ? `следующий ${d(next.startDate)} – ${d(next.endDate)}` : '';
+  if (cur) {
+    // Кінець обрізано межею періоду: курс без строку або закінчиться пізніше
+    const now = cur.endDate >= plan.to ? 'Идёт сейчас' : `Идёт сейчас, до ${d(cur.endDate)} (ещё ${daysUntil(t, cur.endDate) + 1} ${plural(daysUntil(t, cur.endDate) + 1, ['день', 'дня', 'дней'])})`;
+    return { text: [now, nextText].filter(Boolean).join(' · '), due: false };
+  }
+  const now = courses.find((c) => c.kind === 'forecast' && c.startDate === t);
+  if (now) {
+    // Кінець обрізано межею періоду — дату не обіцяємо
+    return { text: now.endDate >= plan.to ? 'Пора начинать' : `Пора начинать: если сегодня, то до ${d(now.endDate)}`, due: true };
+  }
+  const last = courses.filter((c) => c.kind === 'actual' && c.endDate < t).at(-1);
+  const pause = last ? `Перерыв после курса ${d(last.startDate)} – ${d(last.endDate)}` : '';
+  if (next) return { text: [pause || 'Не начат', nextText].join(' · '), due: false };
+  return { text: last ? `Последний курс ${d(last.startDate)} – ${d(last.endDate)}` : '', due: false };
+}
+
 const kindText = (c: PlanCourse, today: string) =>
   c.kind === 'actual' ? 'курс' : c.startDate === today ? 'пора начинать' : 'прогноз';
 
@@ -108,7 +134,7 @@ export function PlanView({ api, people }: { api: CoursesApi; people: Person[] })
   if (error) return <p className="p-5 text-due-ink">{error}</p>;
 
   const names = new Map(people.map((p) => [p.id, p.name]));
-  // Підписи людей лише коли показані обоє: інакше кожен рядок — одна людина
+  // Ім'я в підписі лише коли показані обоє: інакше кожен рядок — одна людина
   const labelled = person === 'all';
 
   return (
@@ -147,12 +173,21 @@ export function PlanView({ api, people }: { api: CoursesApi; people: Person[] })
         ))}
       </div>
 
+      {/* Легенда зверху: без неї смуги не прочитати */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted">
+        <Legend className="bg-accent" text="Курс: был или идёт" />
+        <Legend className="border border-dashed border-accent bg-accent-soft" text="Следующий по схеме" />
+        <Legend className="border border-due bg-due-soft" text="Пора начинать" />
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-0.5 rounded-full bg-ink" />
+          Сегодня
+        </span>
+      </div>
+
       {data && (
         <div className="flex flex-col gap-2.5">
           {/* Шкала місяців; відступи як у картки, щоб збігалася з доріжками */}
           <div aria-hidden="true" className="sticky top-0 z-10 -mx-5 flex bg-ground px-9 py-1.5">
-            {/* w-16 = підпис людини (w-14) + проміжок (gap-2) */}
-            {labelled && <div className="w-16 shrink-0" />}
             <MonthScale from={data.from} to={data.to} />
           </div>
 
@@ -174,34 +209,26 @@ export function PlanView({ api, people }: { api: CoursesApi; people: Person[] })
                 )}
                 <ChevronRight size={18} aria-hidden="true" className="-mr-1 shrink-0 text-muted/60" />
               </span>
-              {u.tracks.map((t) => (
-                <span key={t.personId} className="flex items-center gap-2">
-                  {labelled && (
-                    <span className="w-14 shrink-0 truncate text-xs text-muted">{names.get(t.personId) ?? t.personId}</span>
-                  )}
-                  <Bars
-                    plan={data}
-                    courses={t.courses}
-                    label={`${labelled ? `${names.get(t.personId) ?? t.personId}: ` : ''}${
-                      t.courses.map((c) => `${shortDate(c.startDate, data.today)} – ${shortDate(c.endDate, data.today)}, ${kindText(c, data.today)}`).join('; ') || 'нет курсов'
-                    }`}
-                  />
-                </span>
-              ))}
+              {u.tracks.map((t) => {
+                const sum = summary(t.courses, data);
+                return (
+                  <span key={t.personId} className="flex flex-col gap-1.5">
+                    <span className="text-sm text-muted">
+                      {labelled && <span className="font-semibold text-ink">{names.get(t.personId) ?? t.personId}: </span>}
+                      <span className={sum.due ? 'font-medium text-due-ink' : ''}>{sum.text}</span>
+                    </span>
+                    <Bars
+                      plan={data}
+                      courses={t.courses}
+                      label={`${labelled ? `${names.get(t.personId) ?? t.personId}: ` : ''}${
+                        t.courses.map((c) => `${shortDate(c.startDate, data.today)} – ${shortDate(c.endDate, data.today)}, ${kindText(c, data.today)}`).join('; ') || 'нет курсов'
+                      }`}
+                    />
+                  </span>
+                );
+              })}
             </button>
           ))}
-
-          {units.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted">
-              <Legend className="bg-accent" text="Курс" />
-              <Legend className="border border-dashed border-accent bg-accent-soft" text="Прогноз" />
-              <Legend className="border border-due bg-due-soft" text="Пора начинать" />
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-0.5 rounded-full bg-ink" />
-                Сегодня
-              </span>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -244,7 +271,7 @@ function Bars({ plan, courses, label }: { plan: Plan; courses: PlanCourse[]; lab
   const months: string[] = [];
   for (let m = monthStart(plan.from, 1); m <= plan.to; m = monthStart(m, 1)) months.push(m);
   return (
-    <span role="img" aria-label={label} className="relative block h-5 flex-1 rounded-md bg-ground">
+    <span role="img" aria-label={label} className="relative block h-5 w-full rounded-md bg-ground">
       {months.map((m) => (
         <span key={m} className="absolute inset-y-0 border-l border-line/70" style={{ left: `${pos(plan, m)}%` }} />
       ))}
