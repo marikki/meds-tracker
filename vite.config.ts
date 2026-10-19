@@ -42,9 +42,12 @@ export default defineConfig({
           {
             urlPattern: ({ url, request }) =>
               request.method === 'GET' && url.pathname.startsWith('/api/courses/'),
-            handler: 'StaleWhileRevalidate',
+            // Спершу мережа: після збереження екран має показати свіжі дані, а не копію з кешу.
+            // Кеш — лише коли мережі немає (офлайн) або вона не відповіла за 4 с.
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'api-courses',
+              networkTimeoutSeconds: 4,
               expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
               cacheableResponse: { statuses: [0, 200] },
             },
