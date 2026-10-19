@@ -65,6 +65,16 @@ describe('courses router', () => {
     expect(json.items[0].forecast).toMatchObject({ status: 'active', nextStartDate: '2027-01-12' });
   });
 
+  it('план: фактичний курс і прогнозні повтори в межах періоду', async () => {
+    const { json } = await call('GET', '/plan?from=2026-10-01&to=2027-03-31&person=marina');
+    expect(json.rows).toHaveLength(1);
+    expect(json.rows[0]).toMatchObject({ personId: 'marina', drugName: 'Магний', group: null });
+    expect(json.rows[0].courses).toEqual([
+      { startDate: '2026-10-14', endDate: '2026-11-12', kind: 'actual' },
+      { startDate: '2027-01-12', endDate: '2027-02-10', kind: 'forecast' },
+    ]);
+  });
+
   it('не дає створити курс, що перетинається', async () => {
     const r = await call('POST', '/courses', { startDate: '2026-11-01', prescriptionIds: [magnesiumIds[0]] });
     expect(r.status).toBe(409);

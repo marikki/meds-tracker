@@ -102,3 +102,18 @@ export interface OverviewItem {
 }
 
 export interface Overview { today: ISODate; items: OverviewItem[] }
+
+/** Відрізок на діаграмі: actual — був або йде, forecast — прогноз за схемою (обрізані межами періоду) */
+export interface PlanCourse { startDate: ISODate; endDate: ISODate; kind: 'actual' | 'forecast' }
+
+export interface PlanRow {
+  prescriptionId: number;
+  personId: string;
+  drugId: number;
+  drugName: string;
+  group: { id: number; name: string } | null;
+  courses: PlanCourse[];
+}
+
+/** GET /plan?from=&to=&person= */
+export interface Plan { today: ISODate; from: ISODate; to: ISODate; rows: PlanRow[] }

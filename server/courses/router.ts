@@ -476,7 +476,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const from = date(req.query.from, 'from');
     const to = date(req.query.to, 'to');
     if (to < from) throw new HttpError(400, 'to раньше from');
-    const { drugs, coursesBy, prescriptions, blockers } = load(personParam(req));
+    const { drugs, coursesBy, prescriptions, blockers, group } = load(personParam(req));
     res.json({
       today: t,
       from,
@@ -486,7 +486,9 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         return {
           prescriptionId: p.id,
           personId: p.person_id,
+          drugId: d.id,
           drugName: d.name,
+          group: group(d),
           courses: project(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t, from, to, blockers(d, p.person_id)),
         };
       }),

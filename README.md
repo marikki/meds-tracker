@@ -46,7 +46,7 @@ data/meds.db           база (bind-том, не в git)
 | GET / POST | `/drugs` | довідник з призначеннями |
 | PATCH | `/drugs/:id` | змінити схему, дозування, архівувати (`archived: true`) |
 | GET | `/overview?person=all\|<id>` | статус і прогноз по кожному призначенню |
-| GET | `/plan?from=&to=&person=` | фактичні та прогнозні курси для діаграми |
+| GET | `/plan?from=&to=&person=` | фактичні та прогнозні курси для діаграми (вкладка «План») |
 | POST | `/courses` | `{ startDate, prescriptionIds[] }` — старт кількох курсів однією датою |
 | PATCH | `/courses/:id` | `{ startDate?, endedEarlyOn? }` — виправити старт / завершити достроково |
 | DELETE | `/courses/:id` | видалити помилковий курс |

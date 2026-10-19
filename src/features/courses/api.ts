@@ -8,6 +8,7 @@ import type {
   HistoryCourse,
   Overview,
   Person,
+  Plan,
 } from './types';
 
 /** Клієнт без глобального стану: базовий URL передає хост (окремий застосунок чи FamilyHub). */
@@ -36,6 +37,8 @@ export function createApi(base: string) {
     updateGroup: (id: number, patch: Partial<GroupInput>) => request<DrugGroup>('PATCH', `/groups/${id}`, patch),
     deleteGroup: (id: number) => request<void>('DELETE', `/groups/${id}`),
     overview: (person: string) => request<Overview>('GET', `/overview?person=${encodeURIComponent(person)}`),
+    plan: (from: string, to: string, person: string) =>
+      request<Plan>('GET', `/plan?from=${from}&to=${to}&person=${encodeURIComponent(person)}`),
     /** endDate — для минулого курсу заднім числом */
     startCourses: (startDate: string, prescriptionIds: number[], endDate?: string) =>
       request('POST', '/courses', { startDate, prescriptionIds, endDate }),

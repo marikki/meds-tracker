@@ -2,6 +2,7 @@ import { CalendarDays, House, Pill } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { createApi } from './api';
 import { Drugs } from './Drugs';
+import { PlanView } from './Plan';
 import { Today } from './Today';
 import type { Person } from './types';
 
@@ -34,7 +35,7 @@ export function CoursesModule({ apiBase, currentPersonId }: { apiBase: string; c
       <main className="flex-1">
         {tab === 'today' && <Today api={api} people={people} />}
         {tab === 'drugs' && <Drugs api={api} people={people} />}
-        {tab === 'plan' && <p className="p-5 text-muted">План — следующий шаг.</p>}
+        {tab === 'plan' && <PlanView api={api} people={people} />}
       </main>
       <nav aria-label="Разделы" className="sticky bottom-0 flex border-t border-line bg-surface px-3 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {tabs.map(({ id, label, Icon }) => (
