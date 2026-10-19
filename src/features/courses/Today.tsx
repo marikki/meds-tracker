@@ -1,9 +1,10 @@
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
+import { DrugSheet } from './Drugs';
 import { EditCourse } from './EditCourse';
 import { StartCourse } from './StartCourse';
 import { daysUntil, plural, shortDate } from './format';
@@ -12,6 +13,9 @@ import { afterText, drugLines, groupByUnit, uniquePeople, unitKey, unitName } fr
 
 /** «через 12 дн.» + «после «Витамины B»» через крапку */
 const join = (...parts: string[]) => parts.filter(Boolean).join(' · ');
+
+/** Що відкривати по натисканню: комплекс або сам препарат */
+const unitTarget = (i: OverviewItem) => (i.group ? { groupId: i.group.id } : { drugId: i.drug.id });
 
 const uniqueDrugs = (g: OverviewItem[]) => [...new Map(g.map((i) => [i.drug.id, i.drug])).values()];
 
@@ -29,6 +33,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [busy, setBusy] = useState(false);
   // Активний курс, відкритий для виправлення (призначення одного препарату чи комплексу)
   const [editing, setEditing] = useState<OverviewItem[] | null>(null);
+  // Препарат чи комплекс, відкритий для перегляду й правки
+  const [opened, setOpened] = useState<{ drugId: number } | { groupId: number } | null>(null);
   // Збільшується після старту курсів, щоб перечитати огляд
   const [version, setVersion] = useState(0);
 
@@ -119,6 +125,18 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           }}
         />
       )}
+      {opened && (
+        <DrugSheet
+          api={api}
+          people={people}
+          target={opened}
+          backLabel="Сегодня"
+          onClose={(changed) => {
+            setOpened(null);
+            if (changed) setVersion((v) => v + 1);
+          }}
+        />
+      )}
       <header>
         <p className="text-sm text-muted">{shortDate(t, t)}</p>
         <h1 className="text-3xl font-bold tracking-tight">Сегодня</h1>
@@ -152,20 +170,27 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                 key={key}
                 className="flex flex-col rounded-2xl bg-surface ring-1 ring-transparent transition-colors ring-inset has-checked:bg-due-soft has-checked:ring-due/35 motion-reduce:transition-none"
               >
-                <label className={`flex cursor-pointer items-center gap-3.5 px-4 ${g[0].group ? 'pt-3 pb-1' : 'py-3'}`}>
-                  <Check tone="due" checked={picked.has(key)} onChange={() => togglePick(key)} />
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="font-semibold">{unitName(g[0])}</span>
-                    <span className="text-sm text-muted">
-                      {when && <span className="font-medium text-due-ink">{when}</span>}
-                      {when && rest && ' · '}
-                      {rest}
+                {/* Кружок позначає, решта рядка відкриває препарат чи комплекс */}
+                <div className={`flex items-center gap-3.5 px-4 ${g[0].group ? 'pt-3 pb-1' : 'py-3'}`}>
+                  <label className="-m-2.5 flex cursor-pointer p-2.5">
+                    <Check tone="due" label={unitName(g[0])} checked={picked.has(key)} onChange={() => togglePick(key)} />
+                  </label>
+                  <button type="button" onClick={() => setOpened(unitTarget(g[0]))}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="font-semibold">{unitName(g[0])}</span>
+                      <span className="text-sm text-muted">
+                        {when && <span className="font-medium text-due-ink">{when}</span>}
+                        {when && rest && ' · '}
+                        {rest}
+                      </span>
                     </span>
-                  </span>
-                  {badges(g)}
-                </label>
+                    {badges(g)}
+                    <ChevronRight size={18} aria-hidden="true" className="-mr-1 shrink-0 text-muted/60" />
+                  </button>
+                </div>
                 {g[0].group && (
-                  // Окремо від label, щоб розгортання не перемикало галочку; 54px — відступ під текст рядка
+                  // 54px — відступ під текст рядка (кружок + проміжок)
                   <div className="flex flex-col pr-4 pb-2 pl-[54px]">
                     <button
                       type="button"
@@ -185,9 +210,15 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                         {uniqueDrugs(g).map((d) => {
                           const dosage = dosageOf(g, d.id);
                           return (
-                            <li key={d.id} className="flex flex-col">
-                              <span className="text-[15px] font-medium">{d.name}</span>
-                              {dosage && <span className="text-sm text-muted">{dosage}</span>}
+                            <li key={d.id}>
+                              <button type="button" onClick={() => setOpened({ drugId: d.id })}
+                                className="flex w-full items-center gap-2 text-left">
+                                <span className="flex min-w-0 flex-1 flex-col">
+                                  <span className="text-[15px] font-medium">{d.name}</span>
+                                  {dosage && <span className="text-sm text-muted">{dosage}</span>}
+                                </span>
+                                <ChevronRight size={18} aria-hidden="true" className="-mr-1 shrink-0 text-muted/60" />
+                              </button>
                             </li>
                           );
                         })}
@@ -265,14 +296,15 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
             {soon.map((g) => {
               const next = g[0].forecast.nextStartDate!;
               return (
-                <div key={unitKey(g[0])} className="flex items-center gap-3.5 py-3">
-                  <div className="w-14 text-sm font-semibold">{shortDate(next, t)}</div>
-                  <div className="flex-1">
-                    <div className="font-semibold">{unitName(g[0])}</div>
-                    <div className="text-sm text-muted">{join(`через ${daysUntil(t, next)} дн.`, afterText(g[0]))}</div>
-                  </div>
+                <button key={unitKey(g[0])} type="button" onClick={() => setOpened(unitTarget(g[0]))}
+                  className="flex w-full items-center gap-3.5 py-3 text-left">
+                  <span className="w-14 shrink-0 text-sm font-semibold">{shortDate(next, t)}</span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="font-semibold">{unitName(g[0])}</span>
+                    <span className="text-sm text-muted">{join(`через ${daysUntil(t, next)} дн.`, afterText(g[0]))}</span>
+                  </span>
                   {badges(g)}
-                </div>
+                </button>
               );
             })}
           </div>

@@ -23,6 +23,53 @@ const label = 'flex flex-col gap-1 text-sm text-muted';
 
 type Editing = { drug: DrugWithPrescriptions | null } | { group: DrugGroup | null };
 
+/**
+ * Форма препарату чи комплексу поверх іншого екрана (з «Сегодня»),
+ * щоб не ходити через вкладку «Препараты».
+ */
+export function DrugSheet({
+  api,
+  people,
+  target,
+  backLabel,
+  onClose,
+}: {
+  api: CoursesApi;
+  people: Person[];
+  target: { drugId: number } | { groupId: number };
+  backLabel: string;
+  onClose: (changed: boolean) => void;
+}) {
+  const [data, setData] = useState<{ drugs: DrugWithPrescriptions[]; groups: DrugGroup[] } | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    Promise.all([api.drugs(), api.groups()]).then(
+      ([drugs, groups]) => setData({ drugs, groups }),
+      (e: Error) => setError(e.message),
+    );
+  }, [api]);
+
+  const drug = data && 'drugId' in target ? data.drugs.find((d) => d.id === target.drugId) : undefined;
+  const group = data && 'groupId' in target ? data.groups.find((g) => g.id === target.groupId) : undefined;
+
+  return (
+    <div className="fixed inset-0 z-20 overflow-y-auto bg-ground">
+      <div className="mx-auto max-w-md">
+        {error && <p className="p-5 text-due-ink">{error}</p>}
+        {data && drug && (
+          <DrugForm api={api} people={people} drug={drug} drugs={data.drugs} groups={data.groups}
+            backLabel={backLabel} onClose={onClose} />
+        )}
+        {data && group && (
+          <GroupForm api={api} group={group} drugs={data.drugs} groups={data.groups}
+            backLabel={backLabel} onClose={onClose} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Drugs({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [drugs, setDrugs] = useState<DrugWithPrescriptions[] | null>(null);
   const [groups, setGroups] = useState<DrugGroup[]>([]);
@@ -279,6 +326,7 @@ function DrugForm({
   drugs,
   groups,
   onClose,
+  backLabel = 'Препараты',
 }: {
   api: CoursesApi;
   people: Person[];
@@ -286,6 +334,8 @@ function DrugForm({
   drugs: DrugWithPrescriptions[];
   groups: DrugGroup[];
   onClose: (changed: boolean) => void;
+  /** Куди веде «назад»: у вкладці «Препараты» чи поверх «Сегодня» */
+  backLabel?: string;
 }) {
   const group = groups.find((g) => g.id === drug?.groupId);
   const [name, setName] = useState(drug?.name ?? '');
@@ -343,7 +393,7 @@ function DrugForm({
           className="flex items-center gap-1 self-start text-sm font-semibold text-accent"
         >
           <ChevronLeft size={18} aria-hidden="true" />
-          Препараты
+          {backLabel}
         </button>
         <h1 className="text-3xl font-bold tracking-tight">{drug ? 'Изменить' : 'Новый препарат'}</h1>
       </header>
@@ -440,12 +490,15 @@ function GroupForm({
   drugs,
   groups,
   onClose,
+  backLabel = 'Препараты',
 }: {
   api: CoursesApi;
   group: DrugGroup | null;
   drugs: DrugWithPrescriptions[];
   groups: DrugGroup[];
   onClose: (changed: boolean) => void;
+  /** Куди веде «назад»: у вкладці «Препараты» чи поверх «Сегодня» */
+  backLabel?: string;
 }) {
   const [name, setName] = useState(group?.name ?? '');
   const [scheme, setScheme] = useState(() => schemeState(group));
@@ -506,7 +559,7 @@ function GroupForm({
           className="flex items-center gap-1 self-start text-sm font-semibold text-accent"
         >
           <ChevronLeft size={18} aria-hidden="true" />
-          Препараты
+          {backLabel}
         </button>
         <h1 className="text-3xl font-bold tracking-tight">{group ? 'Комплекс' : 'Новый комплекс'}</h1>
         <p className="text-sm text-muted">Препараты, которые принимают вместе: курс начинается и заканчивается одновременно.</p>

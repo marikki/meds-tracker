@@ -9,17 +9,20 @@ export function Check({
   onChange,
   disabled,
   tone = 'accent',
+  label,
 }: {
   checked: boolean;
   onChange: () => void;
   disabled?: boolean;
   /** due — у блоці «Пора начинать» */
   tone?: 'accent' | 'due';
+  /** Коли поруч немає тексту підпису (галочка окремо від назви) */
+  label?: string;
 }) {
   const on = tone === 'due' ? 'peer-checked:border-due peer-checked:bg-due' : 'peer-checked:border-accent peer-checked:bg-accent';
   return (
     <span className="relative flex shrink-0">
-      <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} className="peer sr-only" />
+      <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} aria-label={label} className="peer sr-only" />
       <span
         aria-hidden="true"
         className={`flex size-6 items-center justify-center rounded-full border-[1.5px] border-muted/40 bg-surface text-white transition-colors motion-reduce:transition-none ${on} peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent peer-disabled:opacity-40 [&>svg]:scale-50 [&>svg]:opacity-0 [&>svg]:transition-all peer-checked:[&>svg]:scale-100 peer-checked:[&>svg]:opacity-100 motion-reduce:[&>svg]:transition-none`}
