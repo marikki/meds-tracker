@@ -1,6 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
-import { diffDays, isISODate, todayIn, type ISODate } from './dates';
+import { addDays, diffDays, isISODate, todayIn, type ISODate } from './dates';
 import { endOf, FOREVER, forecast, plannedEnd, project, type CourseRecord, type DrugScheme } from './forecast';
 
 /**
@@ -58,6 +58,9 @@ interface DrugRow {
   after_group_id: number | null;
   open_ended: number;
   manual_repeat: number;
+  check_name: string | null;
+  check_from_days: number | null;
+  check_to_days: number | null;
 }
 interface GroupRow {
   id: number;
@@ -83,6 +86,16 @@ interface CourseRow {
   start_date: string;
   planned_end_date: string | null;
   ended_early_on: string | null;
+}
+interface CheckRow {
+  id: number;
+  course_id: number;
+  name: string;
+  due_from: string | null;
+  due_to: string | null;
+  done_on: string | null;
+  result: string;
+  note: string;
 }
 
 /** Схема для відповіді й розрахунку: courseDays = null — без строку */
@@ -110,6 +123,10 @@ const drugDto = (d: DrugRow) => ({
   groupId: d.group_id,
   afterDrugId: d.after_drug_id,
   afterGroupId: d.after_group_id,
+  check:
+    d.check_name === null
+      ? null
+      : { name: d.check_name, fromDays: d.check_from_days!, toDays: d.check_to_days! },
 });
 const groupDto = (g: GroupRow, drugIds: number[]) => ({
   id: g.id,
@@ -147,6 +164,32 @@ function readScheme(b: Record<string, unknown>, current?: SchemeRow) {
   };
 }
 
+/** Контроль аналізом з тіла запиту: { name, fromDays, toDays } | null; немає поля — як був. */
+function readCheck(b: Record<string, unknown>, current?: DrugRow) {
+  if (b.check === undefined) {
+    return {
+      check_name: current?.check_name ?? null,
+      check_from_days: current?.check_from_days ?? null,
+      check_to_days: current?.check_to_days ?? null,
+    };
+  }
+  if (b.check === null) return { check_name: null, check_from_days: null, check_to_days: null };
+  const c = b.check as Record<string, unknown>;
+  const from = int(c.fromDays, 'check.fromDays', 0);
+  const to = int(c.toDays, 'check.toDays', from);
+  return { check_name: str(c.name, 'check.name', { required: true }), check_from_days: from, check_to_days: to };
+}
+
+const checkDto = (c: CheckRow) => ({
+  id: c.id,
+  name: c.name,
+  dueFrom: c.due_from,
+  dueTo: c.due_to,
+  doneOn: c.done_on,
+  result: c.result,
+  note: c.note,
+});
+
 export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRouterOptions) {
   const r = express.Router();
   r.use(express.json());
@@ -164,7 +207,27 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     groups: db.prepare('SELECT * FROM drug_groups ORDER BY name'),
     group: db.prepare('SELECT * FROM drug_groups WHERE id = ?'),
     membersOf: db.prepare('SELECT id FROM drugs WHERE group_id = ? ORDER BY name'),
+    checks: db.prepare('SELECT * FROM checks ORDER BY id'),
+    checksOf: db.prepare('SELECT * FROM checks WHERE course_id = ? ORDER BY id'),
+    check: db.prepare('SELECT * FROM checks WHERE id = ?'),
   };
+
+  /**
+   * Аналіз, який чекає на здачу в межах курсу: збережений незданий,
+   * а якщо курс ще без жодного аналізу — перший за схемою препарату (id = null).
+   */
+  function pendingCheck(d: DrugRow, c: CourseRow, checks: CheckRow[]) {
+    const open = checks.find((x) => x.done_on === null);
+    if (open) return { id: open.id, courseId: c.id, name: open.name, dueFrom: open.due_from, dueTo: open.due_to };
+    if (checks.length > 0 || d.check_name === null) return null;
+    return {
+      id: null,
+      courseId: c.id,
+      name: d.check_name,
+      dueFrom: addDays(c.start_date, d.check_from_days!),
+      dueTo: addDays(c.start_date, d.check_to_days!),
+    };
+  }
 
   /** Усі дані одним проходом, згруповані для розрахунків. */
   function load(personFilter: string | undefined) {
@@ -213,7 +276,10 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       return g ? { id: g.id, name: g.name } : null;
     };
 
-    return { drugs, coursesBy, prescriptions, blockers, after, group };
+    const checksBy = new Map<number, CheckRow[]>();
+    for (const c of q.checks.all() as CheckRow[]) checksBy.set(c.course_id, [...(checksBy.get(c.course_id) ?? []), c]);
+
+    return { drugs, coursesBy, checksBy, prescriptions, blockers, after, group };
   }
 
   function personParam(req: Request): string | undefined {
@@ -341,10 +407,10 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       const after = readAfter(b, { after_drug_id: null, after_group_id: null }, {});
       const info = db
         .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, open_ended, manual_repeat,
-                    notes, after_drug_id, after_group_id)
+                    notes, after_drug_id, after_group_id, check_name, check_from_days, check_to_days)
                   VALUES (@name, @kind, @course_days, @break_days, @courses_per_year, @open_ended, @manual_repeat,
-                    @notes, @after_drug_id, @after_group_id)`)
-        .run({ name, kind, ...readScheme(b), notes: str(b.notes, 'notes'), ...after });
+                    @notes, @after_drug_id, @after_group_id, @check_name, @check_from_days, @check_to_days)`)
+        .run({ name, kind, ...readScheme(b), notes: str(b.notes, 'notes'), ...after, ...readCheck(b) });
       const drugId = Number(info.lastInsertRowid);
       writePrescriptions(drugId, b.prescriptions ?? []);
       return drugId;
@@ -363,6 +429,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         kind: b.kind === undefined ? current.kind : b.kind,
         ...readScheme(b, current),
         ...readAfter(b, current, { drugId: id, groupId: current.group_id }),
+        ...readCheck(b, current),
         notes: b.notes === undefined ? current.notes : str(b.notes, 'notes'),
         archived_at:
           b.archived === undefined ? current.archived_at : b.archived ? new Date().toISOString() : null,
@@ -372,6 +439,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       db.prepare(`UPDATE drugs SET name=@name, kind=@kind, course_days=@course_days, break_days=@break_days,
                   courses_per_year=@courses_per_year, open_ended=@open_ended, manual_repeat=@manual_repeat,
                   after_drug_id=@after_drug_id, after_group_id=@after_group_id,
+                  check_name=@check_name, check_from_days=@check_from_days, check_to_days=@check_to_days,
                   notes=@notes, archived_at=@archived_at WHERE id=@id`)
         .run({ ...next, id });
       if (b.prescriptions !== undefined) writePrescriptions(id, b.prescriptions);
@@ -452,11 +520,13 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
   // ---------- огляд: статус і прогноз по кожному призначенню ----------
   r.get('/overview', (req, res) => {
     const t = today();
-    const { drugs, coursesBy, prescriptions, blockers, after, group } = load(personParam(req));
+    const { drugs, coursesBy, checksBy, prescriptions, blockers, after, group } = load(personParam(req));
     res.json({
       today: t,
       items: prescriptions.map((p) => {
         const d = drugs.get(p.drug_id)!;
+        // Аналіз показуємо лише в курсі, що йде: після кінця курсу контроль уже не актуальний
+        const active = (coursesBy.get(p.id) ?? []).find((c) => c.start_date <= t && endOf(toRecord(c)) >= t);
         return {
           prescriptionId: p.id,
           personId: p.person_id,
@@ -465,6 +535,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
           group: group(d),
           after: after(d),
           forecast: forecast(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t, blockers(d, p.person_id)),
+          check: active ? pendingCheck(d, active, checksBy.get(active.id) ?? []) : null,
         };
       }),
     });
@@ -575,6 +646,57 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     res.status(204).end();
   });
 
+  // ---------- аналізи ----------
+  /**
+   * Здали аналіз у межах курсу: { name, doneOn, result?, note?, next?: { fromDays, toDays } | null }.
+   * Закриває незданий контроль курсу (або перший за схемою); next — призначити наступний від дати здачі.
+   */
+  r.post('/courses/:id/checks', (req, res) => {
+    const c = q.course.get(Number(req.params.id)) as CourseRow | undefined;
+    if (!c) throw new HttpError(404, 'Курс не найден');
+    const b = req.body ?? {};
+    const name = str(b.name, 'name', { required: true });
+    const doneOn = date(b.doneOn, 'doneOn');
+    if (doneOn > today()) throw new HttpError(400, 'Дата анализа не может быть в будущем');
+    if (doneOn < c.start_date) throw new HttpError(400, 'Дата анализа раньше начала курса');
+    const result = str(b.result, 'result');
+    const note = str(b.note, 'note');
+    const next = b.next == null ? null : (b.next as Record<string, unknown>);
+    const nextFrom = next ? int(next.fromDays, 'next.fromDays', 1) : 0;
+    const nextTo = next ? int(next.toDays, 'next.toDays', nextFrom) : 0;
+
+    const p = q.prescription.get(c.prescription_id) as PrescriptionRow;
+    const d = q.drug.get(p.drug_id) as DrugRow;
+    const pending = pendingCheck(d, c, q.checksOf.all(c.id) as CheckRow[]);
+    const id = db.transaction(() => {
+      let id: number;
+      if (pending?.id) {
+        db.prepare('UPDATE checks SET name = ?, done_on = ?, result = ?, note = ? WHERE id = ?')
+          .run(name, doneOn, result, note, pending.id);
+        id = pending.id;
+      } else {
+        id = Number(
+          db.prepare(`INSERT INTO checks (course_id, name, due_from, due_to, done_on, result, note)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(c.id, name, pending?.dueFrom ?? null, pending?.dueTo ?? null, doneOn, result, note).lastInsertRowid,
+        );
+      }
+      if (next) {
+        db.prepare('INSERT INTO checks (course_id, name, due_from, due_to) VALUES (?, ?, ?, ?)')
+          .run(c.id, name, addDays(doneOn, nextFrom), addDays(doneOn, nextTo));
+      }
+      return id;
+    })();
+    res.status(201).json(checkDto(q.check.get(id) as CheckRow));
+  });
+
+  /** Видалити результат, внесений помилково, або скасувати призначений контроль. */
+  r.delete('/checks/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM checks WHERE id = ?').run(Number(req.params.id));
+    if (info.changes === 0) throw new HttpError(404, 'Анализ не найден');
+    res.status(204).end();
+  });
+
   /** Історія курсів препарату (?drug=) чи комплексу (?group=), від нових до старих */
   r.get('/history', (req, res) => {
     const drugId = req.query.drug === undefined ? null : Number(req.query.drug);
@@ -600,6 +722,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         startDate: c.start_date,
         // null — курс без строку, ще йде
         endDate: endOf(toRecord(c)) === FOREVER ? null : endOf(toRecord(c)),
+        // Лише здані: призначений контроль видно на «Сегодня»
+        checks: (q.checksOf.all(c.id) as CheckRow[]).filter((x) => x.done_on !== null).map(checkDto),
       })),
     });
   });

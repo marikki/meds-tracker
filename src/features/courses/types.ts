@@ -21,6 +21,32 @@ export interface Drug {
   groupId: number | null;
   afterDrugId: number | null;
   afterGroupId: number | null;
+  /** Контроль аналізом: який і коли від старту курсу; null — не потрібен */
+  check: CheckScheme | null;
+}
+
+/** «25(OH)D через 42–56 днів від старту» */
+export interface CheckScheme { name: string; fromDays: number; toDays: number }
+
+/** Аналіз у межах курсу: GET /history (здані) */
+export interface LabCheck {
+  id: number;
+  name: string;
+  /** Вікно, коли здати; null — не призначалося */
+  dueFrom: ISODate | null;
+  dueTo: ISODate | null;
+  doneOn: ISODate | null;
+  result: string;
+  note: string;
+}
+
+/** Аналіз, що чекає на здачу в курсі, який іде; id = null — перший, за схемою препарату */
+export interface PendingCheck {
+  id: number | null;
+  courseId: number;
+  name: string;
+  dueFrom: ISODate | null;
+  dueTo: ISODate | null;
 }
 
 /** Комплекс: GET /groups */
@@ -55,6 +81,7 @@ export interface DrugInput {
   manualRepeat: boolean;
   afterDrugId: number | null;
   afterGroupId: number | null;
+  check: CheckScheme | null;
   notes: string;
   prescriptions: { personId: string; dosage: string }[];
 }
@@ -79,6 +106,8 @@ export interface HistoryCourse {
   startDate: ISODate;
   /** Фактичний кінець (з урахуванням дострокового); null — без строку, ще йде */
   endDate: ISODate | null;
+  /** Здані аналізи */
+  checks: LabCheck[];
 }
 
 export interface Forecast {
@@ -99,6 +128,8 @@ export interface OverviewItem {
   /** «Начинать после»: препарат или комплекс */
   after: { kind: 'drug' | 'group'; id: number; name: string } | null;
   forecast: Forecast;
+  /** Аналіз, який треба здати в курсі, що йде */
+  check: PendingCheck | null;
 }
 
 export interface Overview { today: ISODate; items: OverviewItem[] }

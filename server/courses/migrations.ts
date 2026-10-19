@@ -107,6 +107,32 @@ const migrations: { id: number; name: string; sql: string }[] = [
       CREATE INDEX courses_prescription_start ON courses (prescription_id, start_date);
     `,
   },
+  {
+    id: 4,
+    name: 'lab_checks',
+    sql: `
+      -- Контроль аналізом: який аналіз і вікно «через N–M днів від старту курсу». NULL — контролю немає.
+      ALTER TABLE drugs ADD COLUMN check_name TEXT;
+      ALTER TABLE drugs ADD COLUMN check_from_days INTEGER CHECK (check_from_days IS NULL OR check_from_days >= 0);
+      ALTER TABLE drugs ADD COLUMN check_to_days INTEGER CHECK (check_to_days IS NULL OR check_to_days >= check_from_days);
+
+      -- Аналізи в межах курсу. done_on NULL — ще не зданий (призначений наступний контроль).
+      -- Перший контроль курсу не зберігається, доки його не здали: вікно береться зі схеми препарату.
+      CREATE TABLE checks (
+        id         INTEGER PRIMARY KEY,
+        course_id  INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        name       TEXT NOT NULL,
+        due_from   TEXT,                      -- вікно, коли здати; NULL — не призначалося
+        due_to     TEXT,
+        done_on    TEXT,
+        result     TEXT NOT NULL DEFAULT '',
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK (due_from IS NULL OR due_to >= due_from)
+      );
+      CREATE INDEX checks_course ON checks (course_id);
+    `,
+  },
 ];
 
 export function migrate(db: Database.Database): void {

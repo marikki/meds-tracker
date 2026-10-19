@@ -5,7 +5,7 @@ import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { CourseHistory } from './CourseHistory';
 import { useOnVisible } from './useOnVisible';
-import type { Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Person } from './types';
+import type { CheckScheme, Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Person } from './types';
 
 const KIND_LABEL: Record<Drug['kind'], string> = { supplement: 'Добавка', peptide: 'Пептид' };
 
@@ -22,6 +22,13 @@ function schemeText(first: string, s: Scheme, after: string) {
   if (s.coursesPerYear && !s.manualRepeat) parts.push(`до ${s.coursesPerYear} в год`);
   if (after) parts.push(`после «${after}»`);
   return parts.join(' · ');
+}
+
+/** «анализ 25(OH)D через 6–8 нед.» — для рядка схеми */
+export function checkText(c: CheckScheme) {
+  const w = (d: number) => Math.round((d / 7) * 10) / 10;
+  const span = c.fromDays === c.toDays ? `${w(c.fromDays)}` : `${w(c.fromDays)}–${w(c.toDays)}`;
+  return `анализ ${c.name} через ${span} нед.`;
 }
 
 const field = 'h-11 rounded-xl border border-line bg-surface px-3 text-base text-ink';
@@ -145,7 +152,10 @@ export function Drugs({ api, people }: { api: CoursesApi; people: Person[] }) {
           })}
         </span>
       </span>
-      <span className="text-sm text-muted">{schemeText(KIND_LABEL[d.kind], d, afterName(d))}</span>
+      <span className="text-sm text-muted">
+        {schemeText(KIND_LABEL[d.kind], d, afterName(d))}
+        {d.check && ` · ${checkText(d.check)}`}
+      </span>
       {d.prescriptions.some((p) => p.dosage) && (
         <span className="text-sm text-muted">
           {d.prescriptions
@@ -315,6 +325,58 @@ const schemeInput = (s: SchemeState): Scheme => ({
   manualRepeat: s.manual,
 });
 
+/** Контроль аналізом у формі: тижні рядками, як у полях; on = false — не потрібен */
+type CheckState = ReturnType<typeof checkState>;
+const checkState = (c: CheckScheme | null) => ({
+  on: c !== null,
+  name: c?.name ?? '',
+  fromWeeks: c ? String(Math.round((c.fromDays / 7) * 10) / 10) : '',
+  toWeeks: c ? String(Math.round((c.toDays / 7) * 10) / 10) : '',
+});
+const checkInput = (c: CheckState): CheckScheme | null => {
+  if (!c.on) return null;
+  const from = Math.round(Number(c.fromWeeks) * 7);
+  // «до» не заповнили — вікно в один тиждень від «через»
+  return { name: c.name.trim(), fromDays: from, toDays: c.toWeeks ? Math.round(Number(c.toWeeks) * 7) : from };
+};
+
+function CheckFields({ value, onChange }: { value: CheckState; onChange: (v: CheckState) => void }) {
+  const set = (patch: Partial<CheckState>) => onChange({ ...value, ...patch });
+  return (
+    <div className="flex flex-col gap-3 rounded-xl bg-surface px-3 py-3">
+      <label className="flex cursor-pointer items-start gap-3">
+        <Check checked={value.on} onChange={() => set({ on: !value.on })} />
+        <span className="flex flex-col">
+          <span className="font-medium">Контроль анализом</span>
+          <span className="text-[13px] text-muted">Напомнить сдать анализ после начала курса</span>
+        </span>
+      </label>
+      {value.on && (
+        <div className="flex flex-col gap-2">
+          <label className={label}>
+            Анализ
+            <input value={value.name} required placeholder="25(OH)D" onChange={(e) => set({ name: e.target.value })}
+              className={field} />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className={label}>
+              Через, недель
+              <input type="number" inputMode="decimal" min={0} step="any" required placeholder="6" value={value.fromWeeks}
+                onChange={(e) => set({ fromWeeks: e.target.value })} className={field} />
+            </label>
+            <label className={label}>
+              До, недель
+              <input type="number" inputMode="decimal" min={Number(value.fromWeeks) || 0} step="any" placeholder="8"
+                value={value.toWeeks} onChange={(e) => set({ toWeeks: e.target.value })} className={field} />
+            </label>
+          </div>
+          <span className="text-[13px] text-muted">Считается от старта курса. Когда подойдёт срок, анализ появится на «Сегодня».</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Значення селекта «Начинать после»: '' | 'd:12' | 'g:3' */
 const afterValue = (a: After | null) =>
   a?.afterDrugId ? `d:${a.afterDrugId}` : a?.afterGroupId ? `g:${a.afterGroupId}` : '';
@@ -377,6 +439,7 @@ function DrugForm({
   const [kind, setKind] = useState<Drug['kind']>(drug?.kind ?? 'supplement');
   const [scheme, setScheme] = useState(() => schemeState(drug));
   const [after, setAfter] = useState(() => afterValue(drug));
+  const [check, setCheck] = useState(() => checkState(drug?.check ?? null));
   const [notes, setNotes] = useState(drug?.notes ?? '');
   // personId → дозування; немає ключа — препарат цій людині не призначено
   const [dosages, setDosages] = useState<Record<string, string>>(() =>
@@ -415,6 +478,7 @@ function DrugForm({
       kind,
       ...schemeInput(scheme),
       ...afterInput(after),
+      check: checkInput(check),
       notes,
       prescriptions: Object.entries(dosages).map(([personId, dosage]) => ({ personId, dosage })),
     };
@@ -472,6 +536,9 @@ function DrugForm({
           />
         </>
       )}
+
+      {/* Контроль — у кожного препарату свій, навіть у комплексі */}
+      <CheckFields value={check} onChange={setCheck} />
 
       <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="mb-1 text-sm text-muted">Кому и дозировка</legend>

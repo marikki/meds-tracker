@@ -238,4 +238,56 @@ describe('courses router', () => {
     expect(back.json).toMatchObject({ courseDays: 56, manualRepeat: true });
     expect((await call('PATCH', `/drugs/${d3.json.id}`, { manualRepeat: 'yes' })).status).toBe(400);
   });
+
+  it('контроль аналізом: вікно від старту, здача, наступний контроль, історія', async () => {
+    // вікно не може закінчуватися раніше, ніж почалося
+    expect((await call('POST', '/drugs', {
+      name: 'Железо', kind: 'supplement', courseDays: null, breakDays: 0, check: { name: 'Ферритин', fromDays: 56, toDays: 42 },
+    })).status).toBe(400);
+    const iron = await call('POST', '/drugs', {
+      name: 'Железо', kind: 'supplement', courseDays: null, breakDays: 0, manualRepeat: true,
+      check: { name: 'Ферритин', fromDays: 42, toDays: 56 },
+      prescriptions: [{ personId: 'marina', dosage: '' }],
+    });
+    expect(iron.json.check).toEqual({ name: 'Ферритин', fromDays: 42, toDays: 56 });
+    const pid = (await call('GET', '/drugs')).json.find((d: any) => d.id === iron.json.id).prescriptions[0].id;
+    const item = async () =>
+      (await call('GET', '/overview?person=marina')).json.items.find((i: any) => i.prescriptionId === pid);
+
+    // курсу ще немає — і контролю немає
+    expect((await item()).check).toBeNull();
+    const course = (await call('POST', '/courses', { startDate: '2026-09-01', prescriptionIds: [pid] })).json[0];
+    // перший контроль — за схемою препарату, ще не збережений
+    expect((await item()).check).toEqual({
+      id: null, courseId: course.id, name: 'Ферритин', dueFrom: '2026-10-13', dueTo: '2026-10-27',
+    });
+
+    const url = `/courses/${course.id}/checks`;
+    expect((await call('POST', url, { name: 'Ферритин', doneOn: '2026-10-20' })).status).toBe(400); // у майбутньому
+    expect((await call('POST', url, { name: 'Ферритин', doneOn: '2026-08-01' })).status).toBe(400); // до курсу
+    const done = await call('POST', url, {
+      name: 'Ферритин', doneOn: '2026-10-14', result: '45 нг/мл', note: 'дозу не менять',
+      next: { fromDays: 84, toDays: 98 },
+    });
+    expect(done.status).toBe(201);
+    expect(done.json).toMatchObject({ dueFrom: '2026-10-13', dueTo: '2026-10-27', doneOn: '2026-10-14', result: '45 нг/мл' });
+
+    // наступний — від дати здачі
+    const next = (await item()).check;
+    expect(next).toMatchObject({ name: 'Ферритин', dueFrom: '2027-01-06', dueTo: '2027-01-20' });
+    expect(next.id).toEqual(expect.any(Number));
+
+    // в історії — лише здані
+    const h = (await call('GET', `/history?drug=${iron.json.id}`)).json;
+    expect(h.courses[0].checks).toEqual([
+      expect.objectContaining({ name: 'Ферритин', doneOn: '2026-10-14', result: '45 нг/мл', note: 'дозу не менять' }),
+    ]);
+
+    // скасувати призначений контроль — більше нічого не чекає
+    expect((await call('DELETE', `/checks/${next.id}`)).status).toBe(204);
+    expect((await item()).check).toBeNull();
+
+    // прибрати контроль зі схеми препарату
+    expect((await call('PATCH', `/drugs/${iron.json.id}`, { check: null })).json.check).toBeNull();
+  });
 });

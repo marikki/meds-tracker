@@ -6,6 +6,7 @@ import type {
   DrugWithPrescriptions,
   GroupInput,
   HistoryCourse,
+  LabCheck,
   Overview,
   Person,
   Plan,
@@ -52,6 +53,12 @@ export function createApi(base: string) {
     updateCourse: (id: number, patch: { startDate?: string; endDate?: string; endedEarlyOn?: string | null }) =>
       request<CourseRow>('PATCH', `/courses/${id}`, patch),
     deleteCourse: (id: number) => request<void>('DELETE', `/courses/${id}`),
+    /** Здали аналіз; next — призначити наступний контроль через fromDays–toDays від дати здачі */
+    addCheck: (
+      courseId: number,
+      input: { name: string; doneOn: string; result: string; note: string; next: { fromDays: number; toDays: number } | null },
+    ) => request<LabCheck>('POST', `/courses/${courseId}/checks`, input),
+    deleteCheck: (id: number) => request<void>('DELETE', `/checks/${id}`),
   };
 }
 

@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, FlaskConical } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
+import { CheckSheet, checkDeadline, checkWindow } from './CheckSheet';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { PersonSwitch } from './components/PersonSwitch';
@@ -38,6 +39,8 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [busy, setBusy] = useState(false);
   // Активний курс, відкритий для виправлення (призначення одного препарату чи комплексу)
   const [editing, setEditing] = useState<OverviewItem[] | null>(null);
+  // Призначення, по якому відмічають зданий аналіз
+  const [checking, setChecking] = useState<OverviewItem | null>(null);
   // Препарат чи комплекс, відкритий для перегляду й правки
   const [opened, setOpened] = useState<{ drugId: number } | { groupId: number } | null>(null);
   // Збільшується після старту курсів, щоб перечитати огляд
@@ -86,6 +89,12 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
 
   const togglePick = toggleIn(setPicked);
 
+  // Аналізи, термін яких настав: від найтерміновішого
+  const checksDue = data.items
+    .filter((i) => i.check?.dueFrom && i.check.dueFrom <= t)
+    .sort((a, b) => (a.check!.dueTo ?? '').localeCompare(b.check!.dueTo ?? ''));
+  const personName = (i: OverviewItem) => byId.get(i.personId)?.p.name ?? i.personId;
+
   async function startToday() {
     setBusy(true);
     setStartError('');
@@ -133,6 +142,18 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           today={t}
           onClose={(changed) => {
             setEditing(null);
+            if (changed) setVersion((v) => v + 1);
+          }}
+        />
+      )}
+      {checking && (
+        <CheckSheet
+          api={api}
+          item={checking}
+          personName={personName(checking)}
+          today={t}
+          onClose={(changed) => {
+            setChecking(null);
             if (changed) setVersion((v) => v + 1);
           }}
         />
@@ -262,6 +283,40 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
         </section>
       )}
 
+      {checksDue.length > 0 && (
+        <section className="flex flex-col gap-2.5">
+          <h2 className="flex items-center gap-2 text-lg font-bold">
+            Пора сдать анализ
+            <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-due px-1.5 text-[13px] font-semibold text-white">
+              {checksDue.length}
+            </span>
+          </h2>
+          <div className="divide-y divide-line rounded-2xl bg-surface px-4">
+            {checksDue.map((i) => {
+              const c = i.check!;
+              const deadline = checkDeadline(c, t);
+              const b = byId.get(i.personId);
+              return (
+                <button key={i.prescriptionId} type="button" onClick={() => setChecking(i)}
+                  className="flex w-full items-center gap-3 py-3 text-left">
+                  <FlaskConical size={20} aria-hidden="true" className="shrink-0 text-due" />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="font-semibold">{c.name}</span>
+                    <span className="text-sm text-muted">
+                      {unitName(i)}
+                      {deadline.text && ' · '}
+                      <span className={deadline.late ? 'font-medium text-due-ink' : ''}>{deadline.text}</span>
+                    </span>
+                  </span>
+                  {b && <PersonBadge person={b.p} primary={b.primary} />}
+                  <span className="shrink-0 rounded-lg bg-due-soft px-2.5 py-1.5 text-sm font-semibold text-due-ink">Сдан</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="flex flex-col gap-2.5">
         <h2 className="text-lg font-bold">Активные курсы</h2>
         {active.length === 0 && <p className="text-sm text-muted">Сейчас ничего не принимаете.</p>}
@@ -305,6 +360,19 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
                   День {c.day} · {c.endDate ? `последний день ${shortDate(c.endDate, t)}` : 'без срока'}
                 </div>
               )}
+              {g.filter((i) => i.check).map((i) => {
+                const k = i.check!;
+                const due = !!k.dueFrom && k.dueFrom <= t;
+                // Ім'я — коли в курсі кілька людей
+                const who = uniquePeople(g).length > 1 ? ` · ${personName(i)}` : '';
+                return (
+                  <div key={i.prescriptionId} className={`flex items-center gap-1.5 text-sm ${due ? 'font-medium text-due-ink' : 'text-muted'}`}>
+                    <FlaskConical size={16} aria-hidden="true" className="shrink-0" />
+                    {due ? `Пора сдать анализ ${k.name}` : `Анализ ${k.name}: ${checkWindow(k, t)}`}
+                    {who}
+                  </div>
+                );
+              })}
             </button>
           );
         })}

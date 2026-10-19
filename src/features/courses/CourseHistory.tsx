@@ -1,10 +1,10 @@
-import { Plus } from 'lucide-react';
+import { FlaskConical, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CoursesApi } from './api';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
 import { addDays, daysUntil, plural, shortDate } from './format';
-import type { HistoryCourse, Person } from './types';
+import type { HistoryCourse, LabCheck, Person } from './types';
 
 const DAYS: [string, string, string] = ['день', 'дня', 'дней'];
 const field = 'h-11 min-w-0 rounded-xl border border-line bg-surface px-3 text-base text-ink';
@@ -29,6 +29,16 @@ function toRows(courses: HistoryCourse[]): Row[] {
   }
   return [...map.values()];
 }
+
+/** «25(OH)D 12 дек: 48 нг/мл» */
+const checkLine = (c: LabCheck, today: string) =>
+  `${c.name} ${shortDate(c.doneOn!, today)}${c.result ? `: ${c.result}` : ''}`;
+
+/** Здані аналізи рядка історії (усіх його курсів), від ранніх до пізніх */
+const checksOf = (r: Row) =>
+  r.courses
+    .flatMap((x) => x.checks.map((c) => ({ c, personId: x.personId })))
+    .sort((a, b) => a.c.doneOn!.localeCompare(b.c.doneOn!));
 
 /** Призначення; для комплексу — з препаратом, щоб бачити, кому з препаратів бракує курсу */
 type Rx = { id: number; personId: string; drugId?: number; drugName?: string };
@@ -68,6 +78,7 @@ export function CourseHistory({
   useEffect(load, [load]);
 
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
+  const nameOf = (id: string) => byId.get(id)?.p.name ?? id;
   const peopleWith = people.filter((p) => prescriptions.some((x) => x.personId === p.id));
 
   /**
@@ -161,6 +172,14 @@ export function CourseHistory({
                     for (const c of r.courses.filter((c) => who.includes(c.personId))) await api.deleteCourse(c.id);
                     done();
                   }}
+                  checks={checksOf(r).map(({ c, personId }) => ({
+                    id: c.id,
+                    text: checkLine(c, t) + (persons.length > 1 ? ` · ${nameOf(personId)}` : ''),
+                  }))}
+                  onDeleteCheck={async (id) => {
+                    await api.deleteCheck(id);
+                    done();
+                  }}
                 />
               </div>
             ) : (
@@ -175,6 +194,16 @@ export function CourseHistory({
                     {state && <span className="font-medium text-accent"> · {state}</span>}
                   </span>
                   {missing && <span className="text-sm font-medium text-due-ink">Нет у: {missing}</span>}
+                  {checksOf(r).map(({ c, personId }) => (
+                    <span key={c.id} className="flex items-start gap-1.5 text-sm text-ink">
+                      <FlaskConical size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-muted" />
+                      <span>
+                        {checkLine(c, t)}
+                        {persons.length > 1 && <span className="text-muted"> · {nameOf(personId)}</span>}
+                        {c.note && <span className="block text-muted">{c.note}</span>}
+                      </span>
+                    </span>
+                  ))}
                 </span>
                 <span className="flex gap-1">
                   {people
@@ -207,6 +236,8 @@ function CourseEditor({
   onCancel,
   onSubmit,
   onDelete,
+  checks = [],
+  onDeleteCheck,
 }: {
   title: string;
   today: string;
@@ -222,6 +253,9 @@ function CourseEditor({
   onCancel: () => void;
   onSubmit: (v: { who: string[]; start: string; end: string }) => Promise<void>;
   onDelete?: (who: string[]) => Promise<void>;
+  /** Здані аналізи курсу — щоб прибрати внесений помилково */
+  checks?: { id: number; text: string }[];
+  onDeleteCheck?: (id: number) => Promise<void>;
 }) {
   const [who, setWho] = useState<string[]>(initialWho);
   const [start, setStart] = useState(initialStart);
@@ -308,6 +342,21 @@ function CourseEditor({
           Отмена
         </button>
       </div>
+      {checks.length > 0 && onDeleteCheck && (
+        <div className="flex flex-col gap-1">
+          <h4 className="text-sm text-muted">Анализы</h4>
+          {checks.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1">{c.text}</span>
+              <button type="button" disabled={busy}
+                onClick={() => window.confirm(`Удалить анализ «${c.text}»?`) && run(() => onDeleteCheck(c.id))}
+                className="h-9 shrink-0 px-2 font-semibold text-due-ink disabled:opacity-50">
+                Удалить
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {onDelete && (
         <button type="button" disabled={busy || who.length === 0}
           onClick={() => {
