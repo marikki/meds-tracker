@@ -175,7 +175,7 @@ export function StartCourse({
             <div className="flex h-14 items-center justify-between gap-3">
               <span className="text-[15px] text-muted">Для кого</span>
               <div role="group" aria-label="Для кого" className="flex gap-1 rounded-[10px] bg-track p-[3px]">
-                {[{ id: 'all', name: 'Оба' }, ...people].map((o) => (
+                {[...people, { id: 'all', name: 'Оба' }].map((o) => (
                   <button
                     key={o.id}
                     type="button"

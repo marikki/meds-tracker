@@ -9,7 +9,7 @@ export function PersonSwitch({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const options = [{ id: 'all', name: 'Оба' }, ...people];
+  const options = [...people, { id: 'all', name: 'Оба' }];
   return (
     <div role="group" aria-label="Чьи курсы показывать" className="grid gap-1 rounded-xl bg-track p-1"
       style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>

@@ -21,7 +21,9 @@ const unitTarget = (i: OverviewItem) => (i.group ? { groupId: i.group.id } : { d
 const uniqueDrugs = (g: OverviewItem[]) => [...new Map(g.map((i) => [i.drug.id, i.drug])).values()];
 
 export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
-  const [person, setPerson] = useState('all');
+  // За замовчуванням — поточний користувач (він першим у people), поки не вибрали інше
+  const [pickedPerson, setPerson] = useState('');
+  const person = pickedPerson || people[0]?.id || '';
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   // Відкритий екран «Начать курс»; preselected — призначення, позначені тут, у «Пора начинать»
@@ -42,6 +44,7 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
+    if (!person) return;
     api.overview(person).then(setData, (e: Error) => setError(e.message));
   }, [api, person, version]);
   // Повернулися в застосунок — перечитуємо: дані могли змінитися на іншому телефоні
