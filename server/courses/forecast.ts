@@ -6,7 +6,9 @@ import { addDays, diffDays, maxDate, yearOf, type ISODate } from './dates';
  *  - фактичний кінець = дата дострокового завершення, якщо є, інакше плановий;
  *  - перерва B днів — це B повних днів між курсами: наступний старт = кінець + B + 1;
  *  - ліміт «курсів на рік» рахує курси за датою СТАРТУ в календарному році;
- *    якщо ліміт року вичерпано, наступний старт переноситься на 1 січня наступного року.
+ *    якщо ліміт року вичерпано, наступний старт переноситься на 1 січня наступного року;
+ *  - «починати після» іншого препарату: старт не може припасти на його курс —
+ *    якщо припадає, переноситься на день після кінця цього курсу (blockers — його курси).
  */
 
 export interface DrugScheme {
@@ -58,18 +60,59 @@ function applyYearLimit(candidate: ISODate, scheme: DrugScheme, startsSoFar: ISO
   return date;
 }
 
-export function forecast(scheme: DrugScheme, courses: CourseRecord[], today: ISODate): Forecast {
+/** Зсуває дату за межі курсу-попередника, на який вона припадає. */
+function afterBlockers(date: ISODate, blockers: CourseRecord[]): ISODate {
+  let d = date;
+  for (let moved = true, guard = 0; moved && guard < 50; guard++) {
+    moved = false;
+    for (const b of blockers) {
+      if (b.startDate <= d && d <= endOf(b)) {
+        d = addDays(endOf(b), 1);
+        moved = true;
+      }
+    }
+  }
+  return d;
+}
+
+/** Найраніший старт не раніше candidate з урахуванням і ліміту на рік, і попередника. */
+function earliestStart(candidate: ISODate, scheme: DrugScheme, starts: ISODate[], blockers: CourseRecord[]): ISODate {
+  let d = candidate;
+  for (let guard = 0; guard < 10; guard++) {
+    const next = applyYearLimit(afterBlockers(d, blockers), scheme, starts);
+    if (next === d) return d;
+    d = next;
+  }
+  return d;
+}
+
+export function forecast(
+  scheme: DrugScheme,
+  courses: CourseRecord[],
+  today: ISODate,
+  blockers: CourseRecord[] = [],
+): Forecast {
   const sorted = [...courses].sort((a, b) => a.startDate.localeCompare(b.startDate));
   const started = sorted.filter((c) => c.startDate <= today);
 
   if (started.length === 0) {
-    return { status: 'due', activeCourse: null, lastEndDate: null, nextStartDate: null, overdueDays: 0 };
+    // Ще не приймали: можна сьогодні, якщо зараз не йде курс попередника
+    const wait = afterBlockers(today, blockers);
+    return wait === today
+      ? { status: 'due', activeCourse: null, lastEndDate: null, nextStartDate: null, overdueDays: 0 }
+      : { status: 'break', activeCourse: null, lastEndDate: null, nextStartDate: wait, overdueDays: 0 };
   }
 
   const last = started[started.length - 1];
   const lastEnd = endOf(last);
   const starts = sorted.map((c) => c.startDate);
-  const nextStartDate = applyYearLimit(addDays(lastEnd, scheme.breakDays + 1), scheme, starts);
+  const own = addDays(lastEnd, scheme.breakDays + 1);
+  // Якщо власна перерва вже минула, реальний старт — сьогодні; попередника перевіряємо саме на цю дату
+  let nextStartDate = earliestStart(own, scheme, starts, blockers);
+  if (today > lastEnd && own <= today) {
+    const fromToday = earliestStart(maxDate(nextStartDate, today), scheme, starts, blockers);
+    if (fromToday > today) nextStartDate = fromToday;
+  }
 
   if (today <= lastEnd) {
     return {
@@ -113,21 +156,22 @@ export function project(
   today: ISODate,
   from: ISODate,
   to: ISODate,
+  blockers: CourseRecord[] = [],
 ): ProjectedCourse[] {
   const result: ProjectedCourse[] = courses
     .filter((c) => c.startDate <= to && endOf(c) >= from)
     .map((c) => ({ startDate: c.startDate, endDate: endOf(c), kind: 'actual' as const }));
 
-  const f = forecast(scheme, courses, today);
+  const f = forecast(scheme, courses, today, blockers);
   const starts = courses.map((c) => c.startDate);
   let start = f.status === 'active' ? f.nextStartDate! : maxDate(f.nextStartDate ?? today, today);
-  start = applyYearLimit(start, scheme, starts);
+  start = earliestStart(start, scheme, starts, blockers);
 
   for (let guard = 0; guard < 50 && start <= to; guard++) {
     const end = plannedEnd(start, scheme.courseDays);
     if (end >= from) result.push({ startDate: start, endDate: end, kind: 'forecast' });
     starts.push(start);
-    start = applyYearLimit(addDays(end, scheme.breakDays + 1), scheme, starts);
+    start = earliestStart(addDays(end, scheme.breakDays + 1), scheme, starts, blockers);
   }
   return result.sort((a, b) => a.startDate.localeCompare(b.startDate));
 }

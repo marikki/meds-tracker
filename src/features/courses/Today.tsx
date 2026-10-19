@@ -6,20 +6,17 @@ import { EditCourse } from './EditCourse';
 import { StartCourse } from './StartCourse';
 import { daysUntil, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
+import { afterText, drugLines, groupByUnit, uniquePeople, unitKey, unitName } from './units';
 
-/** Рядки одного препарату в різних людей згортаються в один із кількома бейджами. */
-function groupByDrug(items: OverviewItem[]) {
-  const map = new Map<number, OverviewItem[]>();
-  for (const i of items) map.set(i.drug.id, [...(map.get(i.drug.id) ?? []), i]);
-  return [...map.values()];
-}
+/** «через 12 дн.» + «после «Витамины B»» через крапку */
+const join = (...parts: string[]) => parts.filter(Boolean).join(' · ');
 
 export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const [person, setPerson] = useState('all');
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
-  // Активний курс, відкритий для виправлення (призначення одного препарату)
+  // Активний курс, відкритий для виправлення (призначення одного препарату чи комплексу)
   const [editing, setEditing] = useState<OverviewItem[] | null>(null);
   // Збільшується після старту курсів, щоб перечитати огляд
   const [version, setVersion] = useState(0);
@@ -31,7 +28,7 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
   const badges = (group: OverviewItem[]) => (
     <span className="flex gap-1">
-      {group.map((i) => {
+      {uniquePeople(group).map((i) => {
         const b = byId.get(i.personId);
         return b ? <PersonBadge key={i.personId} person={b.p} primary={b.primary} /> : null;
       })}
@@ -42,9 +39,9 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
   if (!data) return null;
 
   const t = data.today;
-  const due = groupByDrug(data.items.filter((i) => i.forecast.status === 'due'));
-  const active = groupByDrug(data.items.filter((i) => i.forecast.status === 'active'));
-  const soon = groupByDrug(data.items.filter((i) => i.forecast.status === 'break')).sort((a, b) =>
+  const due = groupByUnit(data.items.filter((i) => i.forecast.status === 'due'));
+  const active = groupByUnit(data.items.filter((i) => i.forecast.status === 'active'));
+  const soon = groupByUnit(data.items.filter((i) => i.forecast.status === 'break')).sort((a, b) =>
     a[0].forecast.nextStartDate!.localeCompare(b[0].forecast.nextStartDate!),
   );
 
@@ -86,15 +83,18 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           {due.map((g) => {
             const f = g[0].forecast;
             return (
-              <div key={g[0].drug.id} className="flex items-center justify-between gap-3">
+              <div key={unitKey(g[0])} className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="font-semibold">{g[0].drug.name}</div>
+                  <div className="font-semibold">{unitName(g[0])}</div>
                   <div className="text-sm text-due-ink">
-                    {f.nextStartDate === null
-                      ? 'Ещё не принимали'
-                      : f.overdueDays === 0
-                        ? 'Перерыв закончился сегодня'
-                        : `Перерыв закончился ${shortDate(f.nextStartDate, t)}`}
+                    {join(
+                      f.nextStartDate === null
+                        ? 'Ещё не принимали'
+                        : f.overdueDays === 0
+                          ? 'Перерыв закончился сегодня'
+                          : `Перерыв закончился ${shortDate(f.nextStartDate, t)}`,
+                      afterText(g[0]),
+                    )}
                   </div>
                 </div>
                 {badges(g)}
@@ -114,15 +114,23 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
           const c = g[0].forecast.activeCourse!;
           return (
             <button
-              key={g[0].drug.id}
+              key={unitKey(g[0])}
               type="button"
               onClick={() => setEditing(g)}
               className="flex flex-col gap-2.5 rounded-2xl bg-surface px-4 py-3.5 text-left"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="font-semibold">{g[0].drug.name}</div>
-                  <div className="text-sm text-muted">{g[0].dosage}</div>
+                  <div className="font-semibold">{unitName(g[0])}</div>
+                  {g[0].group ? (
+                    drugLines(g).map((d) => (
+                      <div key={d.name} className="text-sm text-muted">
+                        {d.dosage ? `${d.name} — ${d.dosage}` : d.name}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-muted">{g[0].dosage}</div>
+                  )}
                 </div>
                 {badges(g)}
               </div>
@@ -145,11 +153,11 @@ export function Today({ api, people }: { api: CoursesApi; people: Person[] }) {
             {soon.map((g) => {
               const next = g[0].forecast.nextStartDate!;
               return (
-                <div key={g[0].drug.id} className="flex items-center gap-3.5 py-3">
+                <div key={unitKey(g[0])} className="flex items-center gap-3.5 py-3">
                   <div className="w-14 text-sm font-semibold">{shortDate(next, t)}</div>
                   <div className="flex-1">
-                    <div className="font-semibold">{g[0].drug.name}</div>
-                    <div className="text-sm text-muted">через {daysUntil(t, next)} дн.</div>
+                    <div className="font-semibold">{unitName(g[0])}</div>
+                    <div className="text-sm text-muted">{join(`через ${daysUntil(t, next)} дн.`, afterText(g[0]))}</div>
                   </div>
                   {badges(g)}
                 </div>

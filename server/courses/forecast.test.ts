@@ -89,6 +89,40 @@ describe('forecast', () => {
   });
 });
 
+describe('починати після', () => {
+  const nmn: DrugScheme = { courseDays: 42, breakDays: 60, coursesPerYear: null };
+  const vitaminB = [course('2026-10-01', 90)]; // кінець 29.12
+
+  it('ще не приймали, а попередник іде — чекаємо його кінця', () => {
+    const f = forecast(nmn, [], '2026-10-14', vitaminB);
+    expect(f).toMatchObject({ status: 'break', nextStartDate: '2026-12-30', lastEndDate: null });
+  });
+
+  it('попередник закінчився — можна починати', () => {
+    expect(forecast(nmn, [], '2027-01-05', vitaminB)).toMatchObject({ status: 'due', nextStartDate: null });
+  });
+
+  it('попередника ще не починали — не блокує', () => {
+    expect(forecast(nmn, [], '2026-10-14', []).status).toBe('due');
+  });
+
+  it('власна перерва минула, але йде новий курс попередника — переносимо', () => {
+    const own = [course('2026-06-01', 42)]; // кінець 12.07, своя перерва до 10.09
+    const f = forecast(nmn, own, '2026-10-14', vitaminB);
+    expect(f).toMatchObject({ status: 'break', nextStartDate: '2026-12-30', overdueDays: 0 });
+  });
+
+  it('прогноз після активного курсу теж оминає попередника', () => {
+    const own = [course('2026-09-01', 42)]; // кінець 12.10, своя перерва до 11.12 — це посеред курсу B
+    expect(forecast(nmn, own, '2026-10-10', vitaminB).nextStartDate).toBe('2026-12-30');
+  });
+
+  it('прогноз для плану оминає попередника', () => {
+    const p = project(nmn, [], '2026-10-14', '2026-10-01', '2027-02-28', vitaminB);
+    expect(p[0]).toEqual({ startDate: '2026-12-30', endDate: '2027-02-09', kind: 'forecast' });
+  });
+});
+
 describe('project', () => {
   it('фактичний курс + прогнозні до кінця горизонту', () => {
     const scheme: DrugScheme = { courseDays: 20, breakDays: 90, coursesPerYear: 3 };

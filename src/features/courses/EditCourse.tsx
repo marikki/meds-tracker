@@ -4,10 +4,11 @@ import type { CoursesApi } from './api';
 import { PersonBadge } from './components/PersonBadge';
 import { addDays, shortDate } from './format';
 import type { CourseRow, OverviewItem, Person } from './types';
+import { unitName } from './units';
 
 /**
  * Виправлення активного курсу: дата старту, дострокове завершення, видалення помилкового.
- * items — призначення одного препарату з активним курсом (як згруповано на «Сегодня»).
+ * items — призначення одного препарату чи комплексу з активним курсом (як згруповано на «Сегодня»).
  */
 export function EditCourse({
   api,
@@ -22,7 +23,9 @@ export function EditCourse({
   today: string;
   onClose: (changed: boolean) => void;
 }) {
-  const drug = items[0].drug;
+  const title = unitName(items[0]);
+  // У комплексі кілька препаратів — тоді в рядках підписуємо, який саме
+  const manyDrugs = new Set(items.map((i) => i.drug.id)).size > 1;
   // prescriptionId → рядок курсу; id курсу в огляді немає, беремо з історії призначення
   const [courses, setCourses] = useState<Map<number, CourseRow> | null>(null);
   const [who, setWho] = useState<Set<number>>(() => new Set(items.map((i) => i.prescriptionId)));
@@ -78,14 +81,14 @@ export function EditCourse({
 
   function finish() {
     const whom = chosen.map(name).join(' и ');
-    if (window.confirm(`Завершить курс «${drug.name}» (${whom}) — последний день ${shortDate(finishOn, today)}?`)) {
+    if (window.confirm(`Завершить курс «${title}» (${whom}) — последний день ${shortDate(finishOn, today)}?`)) {
       apply((c) => api.updateCourse(c.id, { endedEarlyOn: finishOn }));
     }
   }
 
   function remove() {
     const whom = chosen.map(name).join(' и ');
-    if (window.confirm(`Удалить курс «${drug.name}» (${whom})? Он исчезнет из истории, как будто его не начинали.`)) {
+    if (window.confirm(`Удалить курс «${title}» (${whom})? Он исчезнет из истории, как будто его не начинали.`)) {
       apply((c) => api.deleteCourse(c.id));
     }
   }
@@ -99,7 +102,7 @@ export function EditCourse({
         <header className="flex items-start justify-between pt-4 pr-2 pl-5">
           <div>
             <p className="text-sm text-muted">Курс</p>
-            <h1 className="text-[22px] font-bold">{drug.name}</h1>
+            <h1 className="text-[22px] font-bold">{title}</h1>
           </div>
           <button type="button" aria-label="Закрыть" onClick={() => onClose(changed)}
             className="flex size-11 items-center justify-center text-ink">
@@ -118,7 +121,10 @@ export function EditCourse({
                 const b = byId.get(i.personId);
                 const info = (
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="flex">{b && <PersonBadge person={b.p} primary={b.primary} />}</span>
+                    <span className="flex items-center gap-2">
+                      {b && <PersonBadge person={b.p} primary={b.primary} />}
+                      {manyDrugs && <span className="text-[15px] font-semibold">{i.drug.name}</span>}
+                    </span>
                     <span className="text-[13px] text-muted">
                       с {shortDate(a.startDate, today)} · день {a.day} из {a.totalDays} · до {shortDate(a.endDate, today)}
                     </span>

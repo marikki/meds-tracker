@@ -4,6 +4,7 @@ import type { CoursesApi } from './api';
 import { PersonBadge } from './components/PersonBadge';
 import { addDays, daysUntil, plural, shortDate } from './format';
 import type { Overview, OverviewItem, Person } from './types';
+import { drugLines, uniquePeople, unitKey, unitName } from './units';
 
 const DAYS: [string, string, string] = ['день', 'дня', 'дней'];
 
@@ -17,8 +18,8 @@ interface Row {
 }
 
 /**
- * Рядки екрана: препарат × стан. Призначення одного препарату в різних людей
- * згортаються в один рядок із кількома бейджами, якщо для них однаковий стан і текст.
+ * Рядки екрана: препарат чи комплекс × стан. Призначення однієї одиниці (препарати комплексу,
+ * різні люди) згортаються в один рядок із кількома бейджами, якщо для них однаковий стан і текст.
  */
 function buildRows(items: OverviewItem[], start: string, today: string) {
   const groups = new Map<string, Row & { due: boolean }>();
@@ -33,15 +34,17 @@ function buildRows(items: OverviewItem[], start: string, today: string) {
     } else if (f.nextStartDate && start < f.nextStartDate) {
       const n = daysUntil(start, f.nextStartDate);
       kind = 'early';
-      info = `Перерыв до ${shortDate(f.nextStartDate, today)} — раньше на ${n} ${plural(n, DAYS)}`;
+      // Ще не приймали — значить, чекаємо попередника, а не власну перерву
+      const wait = f.lastEndDate === null && i.after ? `После «${i.after.name}»` : 'Перерыв';
+      info = `${wait} до ${shortDate(f.nextStartDate, today)} — раньше на ${n} ${plural(n, DAYS)}`;
     }
     const due = f.status === 'due';
-    const key = `${i.drug.id}|${due}|${info}`;
+    const key = `${unitKey(i)}|${due}|${info}`;
     const g = groups.get(key);
     if (g) g.items.push(i);
     else groups.set(key, { key, items: [i], kind, info, end, due });
   }
-  const all = [...groups.values()].sort((a, b) => a.items[0].drug.name.localeCompare(b.items[0].drug.name, 'ru'));
+  const all = [...groups.values()].sort((a, b) => unitName(a.items[0]).localeCompare(unitName(b.items[0]), 'ru'));
   const order = { early: 0, normal: 0, busy: 1 };
   return {
     due: all.filter((r) => r.due),
@@ -94,7 +97,7 @@ export function StartCourse({
     });
 
   const chosen = [...rows.due, ...rows.rest].filter(isOn);
-  const names = (r: Row) => r.items.map((i) => byId.get(i.personId)?.p.name ?? i.personId).join(' и ');
+  const names = (r: Row) => uniquePeople(r.items).map((i) => byId.get(i.personId)?.p.name ?? i.personId).join(' и ');
 
   async function submit() {
     setBusy(true);
@@ -123,11 +126,14 @@ export function StartCourse({
                 className="size-[22px] shrink-0 accent-accent"
               />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className={`font-semibold ${r.kind === 'busy' ? 'text-muted' : ''}`}>{r.items[0].drug.name}</span>
+                <span className={`font-semibold ${r.kind === 'busy' ? 'text-muted' : ''}`}>{unitName(r.items[0])}</span>
+                {r.items[0].group && (
+                  <span className="text-[13px] text-muted">{drugLines(r.items).map((d) => d.name).join(' + ')}</span>
+                )}
                 <span className={`text-[13px] ${r.kind === 'early' ? 'text-due-ink' : 'text-muted'}`}>{r.info}</span>
               </span>
               <span className="flex gap-1">
-                {r.items.map((i) => {
+                {uniquePeople(r.items).map((i) => {
                   const b = byId.get(i.personId);
                   return b ? <PersonBadge key={i.personId} person={b.p} primary={b.primary} /> : null;
                 })}
@@ -193,7 +199,7 @@ export function StartCourse({
           <p className="text-sm text-muted">
             {n === 0
               ? 'Отметьте, что начинаете'
-              : chosen.map((r) => `${r.items[0].drug.name} — ${names(r)}, до ${shortDate(r.end, data!.today)}`).join(' · ')}
+              : chosen.map((r) => `${unitName(r.items[0])} — ${names(r)}, до ${shortDate(r.end, data!.today)}`).join(' · ')}
           </p>
           {error && <p className="text-sm text-due-ink">{error}</p>}
           <button

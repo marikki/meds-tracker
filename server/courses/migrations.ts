@@ -51,6 +51,32 @@ const migrations: { id: number; name: string; sql: string }[] = [
       CREATE INDEX courses_prescription_start ON courses (prescription_id, start_date);
     `,
   },
+  {
+    id: 2,
+    name: 'groups_and_sequence',
+    sql: `
+      -- Комплекс: препарати, що приймаються разом за однією схемою.
+      -- Схема й «починати після» комплексу копіюються в усі його препарати (див. syncGroup у router.ts),
+      -- тож прогноз і курси працюють з препаратами як раніше.
+      CREATE TABLE drug_groups (
+        id               INTEGER PRIMARY KEY,
+        name             TEXT NOT NULL,
+        course_days      INTEGER NOT NULL CHECK (course_days > 0),
+        break_days       INTEGER NOT NULL CHECK (break_days >= 0),
+        courses_per_year INTEGER CHECK (courses_per_year IS NULL OR courses_per_year > 0),
+        after_drug_id    INTEGER REFERENCES drugs(id) ON DELETE SET NULL,
+        after_group_id   INTEGER REFERENCES drug_groups(id) ON DELETE SET NULL,
+        notes            TEXT NOT NULL DEFAULT '',
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK (after_drug_id IS NULL OR after_group_id IS NULL)
+      );
+
+      ALTER TABLE drugs ADD COLUMN group_id INTEGER REFERENCES drug_groups(id) ON DELETE SET NULL;
+      -- «Починати після»: препарат або комплекс, не обидва
+      ALTER TABLE drugs ADD COLUMN after_drug_id INTEGER REFERENCES drugs(id) ON DELETE SET NULL;
+      ALTER TABLE drugs ADD COLUMN after_group_id INTEGER REFERENCES drug_groups(id) ON DELETE SET NULL;
+    `,
+  },
 ];
 
 export function migrate(db: Database.Database): void {

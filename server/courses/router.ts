@@ -49,6 +49,19 @@ interface DrugRow {
   courses_per_year: number | null;
   notes: string;
   archived_at: string | null;
+  group_id: number | null;
+  after_drug_id: number | null;
+  after_group_id: number | null;
+}
+interface GroupRow {
+  id: number;
+  name: string;
+  course_days: number;
+  break_days: number;
+  courses_per_year: number | null;
+  after_drug_id: number | null;
+  after_group_id: number | null;
+  notes: string;
 }
 interface PrescriptionRow {
   id: number;
@@ -83,7 +96,35 @@ const drugDto = (d: DrugRow) => ({
   coursesPerYear: d.courses_per_year,
   notes: d.notes,
   archived: d.archived_at !== null,
+  groupId: d.group_id,
+  afterDrugId: d.after_drug_id,
+  afterGroupId: d.after_group_id,
 });
+const groupDto = (g: GroupRow, drugIds: number[]) => ({
+  id: g.id,
+  name: g.name,
+  courseDays: g.course_days,
+  breakDays: g.break_days,
+  coursesPerYear: g.courses_per_year,
+  afterDrugId: g.after_drug_id,
+  afterGroupId: g.after_group_id,
+  notes: g.notes,
+  drugIds,
+});
+
+/** Схема з тіла запиту; поля, яких немає, беруться з current. */
+function readScheme(b: Record<string, unknown>, current?: Pick<GroupRow, 'course_days' | 'break_days' | 'courses_per_year'>) {
+  return {
+    course_days: b.courseDays === undefined && current ? current.course_days : int(b.courseDays, 'courseDays', 1),
+    break_days: b.breakDays === undefined && current ? current.break_days : int(b.breakDays, 'breakDays', 0),
+    courses_per_year:
+      b.coursesPerYear === undefined && current
+        ? current.courses_per_year
+        : b.coursesPerYear == null
+          ? null
+          : int(b.coursesPerYear, 'coursesPerYear', 1),
+  };
+}
 
 export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRouterOptions) {
   const r = express.Router();
@@ -99,6 +140,9 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     courses: db.prepare('SELECT * FROM courses ORDER BY start_date'),
     coursesOf: db.prepare('SELECT * FROM courses WHERE prescription_id = ? ORDER BY start_date'),
     course: db.prepare('SELECT * FROM courses WHERE id = ?'),
+    groups: db.prepare('SELECT * FROM drug_groups ORDER BY name'),
+    group: db.prepare('SELECT * FROM drug_groups WHERE id = ?'),
+    membersOf: db.prepare('SELECT id FROM drugs WHERE group_id = ? ORDER BY name'),
   };
 
   /** Усі дані одним проходом, згруповані для розрахунків. */
@@ -111,7 +155,44 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const prescriptions = (q.prescriptions.all() as PrescriptionRow[]).filter(
       (p) => !drugs.get(p.drug_id)!.archived_at && (!personFilter || p.person_id === personFilter),
     );
-    return { drugs, coursesBy, prescriptions };
+    const groups = new Map((q.groups.all() as GroupRow[]).map((g) => [g.id, g]));
+    // Призначення будь-якого препарату (і архівного теж): drug|person → id
+    const prescriptionOf = new Map(
+      (q.prescriptions.all() as PrescriptionRow[]).map((p) => [`${p.drug_id}|${p.person_id}`, p.id]),
+    );
+
+    /** Курси попередника цієї людини: препарату або всіх препаратів комплексу. */
+    function blockers(d: DrugRow, personId: string): CourseRecord[] {
+      const ids = d.after_drug_id
+        ? [d.after_drug_id]
+        : d.after_group_id
+          ? [...drugs.values()].filter((x) => x.group_id === d.after_group_id).map((x) => x.id)
+          : [];
+      return ids.flatMap((id) => {
+        const pid = prescriptionOf.get(`${id}|${personId}`);
+        return pid === undefined ? [] : (coursesBy.get(pid) ?? []).map(toRecord);
+      });
+    }
+
+    /** Що показувати як «после …»: назва препарату чи комплексу */
+    function after(d: DrugRow) {
+      if (d.after_drug_id) {
+        const x = drugs.get(d.after_drug_id);
+        return x ? { kind: 'drug' as const, id: x.id, name: x.name } : null;
+      }
+      if (d.after_group_id) {
+        const g = groups.get(d.after_group_id);
+        return g ? { kind: 'group' as const, id: g.id, name: g.name } : null;
+      }
+      return null;
+    }
+
+    const group = (d: DrugRow) => {
+      const g = d.group_id ? groups.get(d.group_id) : undefined;
+      return g ? { id: g.id, name: g.name } : null;
+    };
+
+    return { drugs, coursesBy, prescriptions, blockers, after, group };
   }
 
   function personParam(req: Request): string | undefined {
@@ -134,6 +215,62 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const key = name.toLocaleLowerCase();
     const clash = (q.drugs.all() as DrugRow[]).find((d) => d.id !== exceptId && d.name.toLocaleLowerCase() === key);
     if (clash) throw new HttpError(409, 'Препарат с таким названием уже есть');
+  }
+
+  /**
+   * «Починати після» з тіла запиту: { afterDrugId } або { afterGroupId }, не обидва.
+   * self — сам препарат чи комплекс, на який посилатися не можна (і на свій комплекс теж).
+   */
+  function readAfter(
+    b: Record<string, unknown>,
+    current: { after_drug_id: number | null; after_group_id: number | null },
+    self: { drugId?: number; groupId?: number | null },
+  ) {
+    const afterDrug = b.afterDrugId === undefined ? current.after_drug_id : b.afterDrugId === null ? null : int(b.afterDrugId, 'afterDrugId', 1);
+    const afterGroup = b.afterGroupId === undefined ? current.after_group_id : b.afterGroupId === null ? null : int(b.afterGroupId, 'afterGroupId', 1);
+    // Нове значення одного поля скидає інше, щоб клієнту не треба було явно передавати null
+    const next = {
+      after_drug_id: b.afterGroupId != null && b.afterDrugId === undefined ? null : afterDrug,
+      after_group_id: b.afterDrugId != null && b.afterGroupId === undefined ? null : afterGroup,
+    };
+    if (next.after_drug_id !== null && next.after_group_id !== null) {
+      throw new HttpError(400, 'Укажите либо препарат, либо комплекс');
+    }
+    if (next.after_drug_id !== null) {
+      const d = q.drug.get(next.after_drug_id) as DrugRow | undefined;
+      if (!d) throw new HttpError(400, 'Препарат для «после» не найден');
+      if (d.id === self.drugId || (self.groupId != null && d.group_id === self.groupId)) {
+        throw new HttpError(400, 'Нельзя начинать после самого себя');
+      }
+    }
+    if (next.after_group_id !== null) {
+      if (!q.group.get(next.after_group_id)) throw new HttpError(400, 'Комплекс для «после» не найден');
+      if (next.after_group_id === self.groupId) throw new HttpError(400, 'Нельзя начинать после самого себя');
+    }
+    return next;
+  }
+
+  /** Копіює схему і «починати після» комплексу в усі його препарати. */
+  function syncGroup(groupId: number) {
+    const g = q.group.get(groupId) as GroupRow;
+    db.prepare(`UPDATE drugs SET course_days = ?, break_days = ?, courses_per_year = ?,
+                after_drug_id = ?, after_group_id = ? WHERE group_id = ?`)
+      .run(g.course_days, g.break_days, g.courses_per_year, g.after_drug_id, g.after_group_id, groupId);
+  }
+
+  function writeMembers(groupId: number, list: unknown) {
+    if (!Array.isArray(list)) throw new HttpError(400, 'drugIds: массив');
+    const ids = list.map((v, i) => int(v, `drugIds[${i}]`, 1));
+    for (const id of ids) if (!q.drug.get(id)) throw new HttpError(400, `Препарат ${id} не найден`);
+    db.prepare('UPDATE drugs SET group_id = NULL WHERE group_id = ?').run(groupId);
+    const add = db.prepare('UPDATE drugs SET group_id = ? WHERE id = ?');
+    for (const id of ids) add.run(groupId, id);
+  }
+
+  function assertUniqueGroupName(name: string, exceptId?: number) {
+    const key = name.toLocaleLowerCase();
+    const clash = (q.groups.all() as GroupRow[]).find((g) => g.id !== exceptId && g.name.toLocaleLowerCase() === key);
+    if (clash) throw new HttpError(409, 'Комплекс с таким названием уже есть');
   }
 
   function writePrescriptions(drugId: number, list: unknown) {
@@ -179,17 +316,11 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const id = db.transaction(() => {
       const name = str(b.name, 'name', { required: true });
       assertUniqueName(name);
+      const after = readAfter(b, { after_drug_id: null, after_group_id: null }, {});
       const info = db
-        .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, notes)
-                  VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(
-          name,
-          kind,
-          int(b.courseDays, 'courseDays', 1),
-          int(b.breakDays, 'breakDays', 0),
-          b.coursesPerYear == null ? null : int(b.coursesPerYear, 'coursesPerYear', 1),
-          str(b.notes, 'notes'),
-        );
+        .prepare(`INSERT INTO drugs (name, kind, course_days, break_days, courses_per_year, notes, after_drug_id, after_group_id)
+                  VALUES (@name, @kind, @course_days, @break_days, @courses_per_year, @notes, @after_drug_id, @after_group_id)`)
+        .run({ name, kind, ...readScheme(b), notes: str(b.notes, 'notes'), ...after });
       const drugId = Number(info.lastInsertRowid);
       writePrescriptions(drugId, b.prescriptions ?? []);
       return drugId;
@@ -206,14 +337,8 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       const next = {
         name: b.name === undefined ? current.name : str(b.name, 'name', { required: true }),
         kind: b.kind === undefined ? current.kind : b.kind,
-        course_days: b.courseDays === undefined ? current.course_days : int(b.courseDays, 'courseDays', 1),
-        break_days: b.breakDays === undefined ? current.break_days : int(b.breakDays, 'breakDays', 0),
-        courses_per_year:
-          b.coursesPerYear === undefined
-            ? current.courses_per_year
-            : b.coursesPerYear === null
-              ? null
-              : int(b.coursesPerYear, 'coursesPerYear', 1),
+        ...readScheme(b, current),
+        ...readAfter(b, current, { drugId: id, groupId: current.group_id }),
         notes: b.notes === undefined ? current.notes : str(b.notes, 'notes'),
         archived_at:
           b.archived === undefined ? current.archived_at : b.archived ? new Date().toISOString() : null,
@@ -221,17 +346,85 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
       if (!KINDS.includes(next.kind)) throw new HttpError(400, `kind: ${KINDS.join(' | ')}`);
       assertUniqueName(next.name, id);
       db.prepare(`UPDATE drugs SET name=@name, kind=@kind, course_days=@course_days, break_days=@break_days,
-                  courses_per_year=@courses_per_year, notes=@notes, archived_at=@archived_at WHERE id=@id`)
+                  courses_per_year=@courses_per_year, after_drug_id=@after_drug_id, after_group_id=@after_group_id,
+                  notes=@notes, archived_at=@archived_at WHERE id=@id`)
         .run({ ...next, id });
       if (b.prescriptions !== undefined) writePrescriptions(id, b.prescriptions);
+      // У комплексі схема і порядок задаються комплексом — повертаємо їх, що б не прийшло
+      if (current.group_id) syncGroup(current.group_id);
     })();
     res.json(drugDto(q.drug.get(id) as DrugRow));
+  });
+
+  // ---------- комплекси ----------
+  r.get('/groups', (_req, res) => {
+    res.json(
+      (q.groups.all() as GroupRow[]).map((g) =>
+        groupDto(g, (q.membersOf.all(g.id) as { id: number }[]).map((d) => d.id)),
+      ),
+    );
+  });
+
+  /** { name, courseDays, breakDays, coursesPerYear, afterDrugId | afterGroupId, notes, drugIds[] } */
+  r.post('/groups', (req, res) => {
+    const b = req.body ?? {};
+    const id = db.transaction(() => {
+      const name = str(b.name, 'name', { required: true });
+      assertUniqueGroupName(name);
+      const info = db
+        .prepare(`INSERT INTO drug_groups (name, course_days, break_days, courses_per_year, after_drug_id, after_group_id, notes)
+                  VALUES (@name, @course_days, @break_days, @courses_per_year, @after_drug_id, @after_group_id, @notes)`)
+        .run({
+          name,
+          ...readScheme(b),
+          ...readAfter(b, { after_drug_id: null, after_group_id: null }, {}),
+          notes: str(b.notes, 'notes'),
+        });
+      const groupId = Number(info.lastInsertRowid);
+      writeMembers(groupId, b.drugIds ?? []);
+      // Перевіряємо «після» ще раз: тепер відомо, які препарати в комплексі
+      readAfter({}, q.group.get(groupId) as GroupRow, { groupId });
+      syncGroup(groupId);
+      return groupId;
+    })();
+    res.status(201).json(groupDto(q.group.get(id) as GroupRow, (q.membersOf.all(id) as { id: number }[]).map((d) => d.id)));
+  });
+
+  r.patch('/groups/:id', (req, res) => {
+    const id = Number(req.params.id);
+    const current = q.group.get(id) as GroupRow | undefined;
+    if (!current) throw new HttpError(404, 'Комплекс не найден');
+    const b = req.body ?? {};
+    db.transaction(() => {
+      const name = b.name === undefined ? current.name : str(b.name, 'name', { required: true });
+      assertUniqueGroupName(name, id);
+      if (b.drugIds !== undefined) writeMembers(id, b.drugIds);
+      db.prepare(`UPDATE drug_groups SET name=@name, course_days=@course_days, break_days=@break_days,
+                  courses_per_year=@courses_per_year, after_drug_id=@after_drug_id, after_group_id=@after_group_id,
+                  notes=@notes WHERE id=@id`)
+        .run({
+          id,
+          name,
+          ...readScheme(b, current),
+          ...readAfter(b, current, { groupId: id }),
+          notes: b.notes === undefined ? current.notes : str(b.notes, 'notes'),
+        });
+      syncGroup(id);
+    })();
+    res.json(groupDto(q.group.get(id) as GroupRow, (q.membersOf.all(id) as { id: number }[]).map((d) => d.id)));
+  });
+
+  /** Розформувати: препарати лишаються з поточною схемою, курси не чіпаємо. */
+  r.delete('/groups/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM drug_groups WHERE id = ?').run(Number(req.params.id));
+    if (info.changes === 0) throw new HttpError(404, 'Комплекс не найден');
+    res.status(204).end();
   });
 
   // ---------- огляд: статус і прогноз по кожному призначенню ----------
   r.get('/overview', (req, res) => {
     const t = today();
-    const { drugs, coursesBy, prescriptions } = load(personParam(req));
+    const { drugs, coursesBy, prescriptions, blockers, after, group } = load(personParam(req));
     res.json({
       today: t,
       items: prescriptions.map((p) => {
@@ -241,7 +434,9 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
           personId: p.person_id,
           dosage: p.dosage,
           drug: drugDto(d),
-          forecast: forecast(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t),
+          group: group(d),
+          after: after(d),
+          forecast: forecast(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t, blockers(d, p.person_id)),
         };
       }),
     });
@@ -253,7 +448,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const from = date(req.query.from, 'from');
     const to = date(req.query.to, 'to');
     if (to < from) throw new HttpError(400, 'to раньше from');
-    const { drugs, coursesBy, prescriptions } = load(personParam(req));
+    const { drugs, coursesBy, prescriptions, blockers } = load(personParam(req));
     res.json({
       today: t,
       from,
@@ -264,7 +459,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
           prescriptionId: p.id,
           personId: p.person_id,
           drugName: d.name,
-          courses: project(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t, from, to),
+          courses: project(scheme(d), (coursesBy.get(p.id) ?? []).map(toRecord), t, from, to, blockers(d, p.person_id)),
         };
       }),
     });

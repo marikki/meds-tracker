@@ -13,7 +13,27 @@ export interface Drug {
   coursesPerYear: number | null;
   notes: string;
   archived: boolean;
+  /** Комплекс; схема і afterDrugId/afterGroupId тоді скопійовані з нього */
+  groupId: number | null;
+  afterDrugId: number | null;
+  afterGroupId: number | null;
 }
+
+/** Комплекс: GET /groups */
+export interface DrugGroup {
+  id: number;
+  name: string;
+  courseDays: number;
+  breakDays: number;
+  coursesPerYear: number | null;
+  afterDrugId: number | null;
+  afterGroupId: number | null;
+  notes: string;
+  drugIds: number[];
+}
+
+/** Тіло POST /groups і PATCH /groups/:id */
+export type GroupInput = Omit<DrugGroup, 'id'>;
 
 export interface DrugPrescription { id: number; personId: string; dosage: string }
 
@@ -27,6 +47,8 @@ export interface DrugInput {
   courseDays: number;
   breakDays: number;
   coursesPerYear: number | null;
+  afterDrugId: number | null;
+  afterGroupId: number | null;
   notes: string;
   prescriptions: { personId: string; dosage: string }[];
 }
@@ -53,6 +75,9 @@ export interface OverviewItem {
   personId: string;
   dosage: string;
   drug: Drug;
+  group: { id: number; name: string } | null;
+  /** «Начинать после»: препарат или комплекс */
+  after: { kind: 'drug' | 'group'; id: number; name: string } | null;
   forecast: Forecast;
 }
 

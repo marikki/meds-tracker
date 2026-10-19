@@ -97,4 +97,72 @@ describe('courses router', () => {
     // власну назву можна змінити лише регістром
     expect((await call('PATCH', `/drugs/${omega.json.id}`, { name: 'ОМЕГА-3' })).status).toBe(200);
   });
+
+  it('комплекс: спільна схема і один прогноз для всіх препаратів', async () => {
+    const mk = (name: string) =>
+      call('POST', '/drugs', {
+        name, kind: 'supplement', courseDays: 90, breakDays: 0,
+        prescriptions: [{ personId: 'marina', dosage: '' }],
+      });
+    const b9 = (await mk('B9')).json;
+    const b12 = (await mk('B12')).json;
+    const nmn = (await mk('NMN')).json;
+    const nr = (await mk('NR')).json;
+
+    const vitB = await call('POST', '/groups', {
+      name: 'Витамины B', courseDays: 90, breakDays: 0, coursesPerYear: 2, drugIds: [b9.id, b12.id],
+    });
+    expect(vitB.status).toBe(201);
+    const nad = await call('POST', '/groups', {
+      name: 'NAD+', courseDays: 42, breakDays: 60, afterGroupId: vitB.json.id, drugIds: [nmn.id, nr.id],
+    });
+    expect(nad.status).toBe(201);
+    expect(nad.json.drugIds.sort()).toEqual([nmn.id, nr.id].sort());
+
+    // схема комплексу скопійована в препарати, і правка препарату її не перебиває
+    await call('PATCH', `/drugs/${nmn.id}`, { courseDays: 5 });
+    const drugs = (await call('GET', '/drugs')).json;
+    expect(drugs.find((d: any) => d.id === nmn.id)).toMatchObject({
+      courseDays: 42, breakDays: 60, groupId: nad.json.id, afterGroupId: vitB.json.id,
+    });
+
+    // стартуємо вітаміни B — NAD+ переїжджає на день після їх кінця
+    const bIds = (await call('GET', '/overview?person=marina')).json.items
+      .filter((i: any) => i.group?.id === vitB.json.id)
+      .map((i: any) => i.prescriptionId);
+    await call('POST', '/courses', { startDate: '2026-10-01', prescriptionIds: bIds });
+    const nadItems = (await call('GET', '/overview?person=marina')).json.items.filter(
+      (i: any) => i.group?.id === nad.json.id,
+    );
+    expect(nadItems).toHaveLength(2);
+    for (const i of nadItems) {
+      expect(i.after).toEqual({ kind: 'group', id: vitB.json.id, name: 'Витамины B' });
+      expect(i.forecast).toMatchObject({ status: 'break', nextStartDate: '2026-12-30' });
+    }
+  });
+
+  it('комплекс: валідація і розформування', async () => {
+    const groups = (await call('GET', '/groups')).json;
+    const nad = groups.find((g: any) => g.name === 'NAD+');
+    // не можна після самого себе чи свого препарату
+    expect((await call('PATCH', `/groups/${nad.id}`, { afterGroupId: nad.id })).status).toBe(400);
+    expect((await call('PATCH', `/groups/${nad.id}`, { afterDrugId: nad.drugIds[0] })).status).toBe(400);
+    expect((await call('POST', '/groups', { name: 'nad+', courseDays: 1, breakDays: 0 })).status).toBe(409);
+
+    expect((await call('DELETE', `/groups/${nad.id}`)).status).toBe(204);
+    const nmn = (await call('GET', '/drugs')).json.find((d: any) => d.name === 'NMN');
+    // препарат лишився зі схемою комплексу, але вже сам по собі
+    expect(nmn).toMatchObject({ groupId: null, courseDays: 42 });
+  });
+
+  it('препарат сам по собі теж може починатися після іншого', async () => {
+    const drugs = (await call('GET', '/drugs')).json;
+    const nmn = drugs.find((d: any) => d.name === 'NMN');
+    const b12 = drugs.find((d: any) => d.name === 'B12');
+    expect((await call('PATCH', `/drugs/${nmn.id}`, { afterDrugId: nmn.id })).status).toBe(400);
+    const r = await call('PATCH', `/drugs/${nmn.id}`, { afterDrugId: b12.id });
+    expect(r.json).toMatchObject({ afterDrugId: b12.id, afterGroupId: null });
+    const item = (await call('GET', '/overview?person=marina')).json.items.find((i: any) => i.drug.id === nmn.id);
+    expect(item.forecast.nextStartDate).toBe('2026-12-30');
+  });
 });
