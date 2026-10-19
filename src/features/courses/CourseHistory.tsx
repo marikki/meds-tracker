@@ -1,0 +1,288 @@
+import { Plus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { CoursesApi } from './api';
+import { Check } from './components/Check';
+import { PersonBadge } from './components/PersonBadge';
+import { addDays, daysUntil, plural, shortDate } from './format';
+import type { HistoryCourse, Person } from './types';
+
+const DAYS: [string, string, string] = ['день', 'дня', 'дней'];
+const field = 'h-11 min-w-0 rounded-xl border border-line bg-surface px-3 text-base text-ink';
+const label = 'flex min-w-0 flex-col gap-1 text-sm text-muted';
+
+/** Рядок історії: курси однакових дат (різні люди, препарати комплексу) — разом */
+interface Row {
+  key: string;
+  start: string;
+  end: string;
+  courses: HistoryCourse[];
+}
+
+function toRows(courses: HistoryCourse[]): Row[] {
+  const map = new Map<string, Row>();
+  for (const c of courses) {
+    const key = `${c.startDate}|${c.endDate}`;
+    const row = map.get(key) ?? { key, start: c.startDate, end: c.endDate, courses: [] };
+    row.courses.push(c);
+    map.set(key, row);
+  }
+  return [...map.values()];
+}
+
+/**
+ * Історія курсів препарату чи комплексу: перегляд, внесення минулого курсу,
+ * правка дат і видалення. prescriptions — усі призначення (для комплексу — усіх його препаратів).
+ */
+export function CourseHistory({
+  api,
+  people,
+  target,
+  prescriptions,
+  courseDays,
+  onChanged,
+}: {
+  api: CoursesApi;
+  people: Person[];
+  target: { drugId: number } | { groupId: number };
+  prescriptions: { id: number; personId: string }[];
+  courseDays: number;
+  onChanged: () => void;
+}) {
+  const [data, setData] = useState<{ today: string; courses: HistoryCourse[] } | null>(null);
+  const [error, setError] = useState('');
+  // key рядка, що редагується, або 'new' — форма минулого курсу
+  const [open, setOpen] = useState<string | null>(null);
+  const targetKey = 'drugId' in target ? `d${target.drugId}` : `g${target.groupId}`;
+
+  const load = useCallback(() => {
+    api.history(target).then(setData, (e: Error) => setError(e.message));
+    // target — новий об'єкт на кожен рендер, тому залежимо від його ключа
+  }, [api, targetKey]);
+  useEffect(load, [load]);
+
+  const byId = useMemo(() => new Map(people.map((p, i) => [p.id, { p, primary: i === 0 }])), [people]);
+  const peopleWith = people.filter((p) => prescriptions.some((x) => x.personId === p.id));
+
+  const done = () => {
+    setOpen(null);
+    onChanged();
+    load();
+  };
+
+  if (error) return <p className="text-sm text-due-ink">{error}</p>;
+  if (!data) return null;
+  const t = data.today;
+  const rows = toRows(data.courses);
+
+  return (
+    <section className="flex flex-col gap-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-bold">История курсов</h2>
+        {open !== 'new' && peopleWith.length > 0 && (
+          <button type="button" onClick={() => setOpen('new')}
+            className="-mr-2 flex h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-accent">
+            <Plus size={18} aria-hidden="true" />
+            Прошедший курс
+          </button>
+        )}
+      </div>
+
+      {open === 'new' && (
+        <CourseEditor
+          title="Прошедший курс"
+          today={t}
+          people={peopleWith}
+          initialWho={peopleWith.map((p) => p.id)}
+          initialStart=""
+          initialEnd=""
+          courseDays={courseDays}
+          submitLabel="Добавить"
+          onCancel={() => setOpen(null)}
+          onSubmit={async ({ who, start, end }) => {
+            const ids = prescriptions.filter((p) => who.includes(p.personId)).map((p) => p.id);
+            await api.startCourses(start, ids, end);
+            done();
+          }}
+        />
+      )}
+
+      {rows.length === 0 && open !== 'new' && (
+        <p className="text-sm text-muted">Курсов ещё не было. Если уже принимали — добавьте прошедший курс.</p>
+      )}
+
+      {rows.length > 0 && (
+        <div className="divide-y divide-line rounded-2xl bg-surface px-4">
+          {rows.map((r) => {
+            const persons = [...new Set(r.courses.map((c) => c.personId))];
+            const length = daysUntil(r.start, r.end) + 1;
+            const state = r.start > t ? 'запланирован' : r.end >= t ? 'идёт сейчас' : '';
+            return open === r.key ? (
+              <div key={r.key} className="py-3">
+                <CourseEditor
+                  title="Изменить курс"
+                  today={t}
+                  people={people.filter((p) => persons.includes(p.id))}
+                  initialWho={persons}
+                  initialStart={r.start}
+                  initialEnd={r.end}
+                  courseDays={courseDays}
+                  submitLabel="Сохранить"
+                  onCancel={() => setOpen(null)}
+                  onSubmit={async ({ who, start, end }) => {
+                    for (const c of r.courses.filter((c) => who.includes(c.personId))) {
+                      await api.updateCourse(c.id, { startDate: start, endDate: end });
+                    }
+                    done();
+                  }}
+                  onDelete={async (who) => {
+                    for (const c of r.courses.filter((c) => who.includes(c.personId))) await api.deleteCourse(c.id);
+                    done();
+                  }}
+                />
+              </div>
+            ) : (
+              <button key={r.key} type="button" onClick={() => setOpen(r.key)}
+                className="flex w-full items-center gap-3 py-3 text-left">
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="font-semibold">
+                    {shortDate(r.start, t)} — {shortDate(r.end, t)}
+                  </span>
+                  <span className="text-sm text-muted">
+                    {length} {plural(length, DAYS)}
+                    {state && <span className="font-medium text-accent"> · {state}</span>}
+                  </span>
+                </span>
+                <span className="flex gap-1">
+                  {people
+                    .filter((p) => persons.includes(p.id))
+                    .map((p) => {
+                      const b = byId.get(p.id)!;
+                      return <PersonBadge key={p.id} person={b.p} primary={b.primary} />;
+                    })}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Форма дат курсу: внесення минулого або правка наявного */
+function CourseEditor({
+  title,
+  today,
+  people,
+  initialWho,
+  initialStart,
+  initialEnd,
+  courseDays,
+  submitLabel,
+  onCancel,
+  onSubmit,
+  onDelete,
+}: {
+  title: string;
+  today: string;
+  people: Person[];
+  initialWho: string[];
+  initialStart: string;
+  initialEnd: string;
+  courseDays: number;
+  submitLabel: string;
+  onCancel: () => void;
+  onSubmit: (v: { who: string[]; start: string; end: string }) => Promise<void>;
+  onDelete?: (who: string[]) => Promise<void>;
+}) {
+  const [who, setWho] = useState<string[]>(initialWho);
+  const [start, setStart] = useState(initialStart);
+  const [end, setEnd] = useState(initialEnd);
+  // Поки кінець не чіпали вручну, він іде за стартом: старт + тривалість курсу, але не пізніше сьогодні
+  const [endTouched, setEndTouched] = useState(initialEnd !== '');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isNew = !onDelete;
+
+  function changeStart(v: string) {
+    setStart(v);
+    if (!endTouched && v) {
+      const planned = addDays(v, courseDays - 1);
+      setEnd(planned > today ? today : planned);
+    }
+  }
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  const invalid = !start || !end || end < start || (isNew && end > today) || who.length === 0;
+  const length = start && end && end >= start ? daysUntil(start, end) + 1 : 0;
+
+  return (
+    <div className={`flex flex-col gap-3 ${isNew ? 'rounded-2xl bg-surface p-4' : ''}`}>
+      <h3 className="font-semibold">{title}</h3>
+      {people.length > 1 && (
+        <div role="group" aria-label="Для кого" className="flex flex-wrap gap-x-5 gap-y-2">
+          {people.map((p) => (
+            <label key={p.id} className="flex cursor-pointer items-center gap-2 font-medium">
+              <Check
+                checked={who.includes(p.id)}
+                onChange={() => setWho((w) => (w.includes(p.id) ? w.filter((x) => x !== p.id) : [...w, p.id]))}
+              />
+              {p.name}
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <label className={label}>
+          Начали
+          <input type="date" value={start} max={today} required onChange={(e) => changeStart(e.target.value)} className={field} />
+        </label>
+        <label className={label}>
+          Последний день
+          <input type="date" value={end} min={start || undefined} max={isNew ? today : undefined} required
+            onChange={(e) => {
+              setEnd(e.target.value);
+              setEndTouched(true);
+            }}
+            className={field} />
+        </label>
+      </div>
+      <p className="text-[13px] text-muted">
+        {length > 0 ? `${length} ${plural(length, DAYS)}` : 'Укажите даты'}
+        {isNew && ' · по схеме — ' + courseDays + ' ' + plural(courseDays, DAYS)}
+      </p>
+      {error && <p className="text-sm text-due-ink">{error}</p>}
+      <div className="flex gap-2">
+        <button type="button" disabled={busy || invalid} onClick={() => run(() => onSubmit({ who, start, end }))}
+          className="h-11 flex-1 rounded-xl bg-accent font-semibold text-white disabled:opacity-50">
+          {submitLabel}
+        </button>
+        <button type="button" disabled={busy} onClick={onCancel}
+          className="h-11 rounded-xl border border-line px-4 font-semibold text-muted">
+          Отмена
+        </button>
+      </div>
+      {onDelete && (
+        <button type="button" disabled={busy || who.length === 0}
+          onClick={() => {
+            if (window.confirm(`Удалить курс ${shortDate(initialStart, today)} — ${shortDate(initialEnd, today)}? Он исчезнет из истории.`)) {
+              run(() => onDelete(who));
+            }
+          }}
+          className="h-10 self-center px-3 text-sm font-semibold text-due-ink disabled:opacity-50">
+          Удалить курс
+        </button>
+      )}
+    </div>
+  );
+}

@@ -1,4 +1,14 @@
-import type { CourseRow, Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Overview, Person } from './types';
+import type {
+  CourseRow,
+  Drug,
+  DrugGroup,
+  DrugInput,
+  DrugWithPrescriptions,
+  GroupInput,
+  HistoryCourse,
+  Overview,
+  Person,
+} from './types';
 
 /** Клієнт без глобального стану: базовий URL передає хост (окремий застосунок чи FamilyHub). */
 export function createApi(base: string) {
@@ -26,11 +36,17 @@ export function createApi(base: string) {
     updateGroup: (id: number, patch: Partial<GroupInput>) => request<DrugGroup>('PATCH', `/groups/${id}`, patch),
     deleteGroup: (id: number) => request<void>('DELETE', `/groups/${id}`),
     overview: (person: string) => request<Overview>('GET', `/overview?person=${encodeURIComponent(person)}`),
-    startCourses: (startDate: string, prescriptionIds: number[]) =>
-      request('POST', '/courses', { startDate, prescriptionIds }),
+    /** endDate — для минулого курсу заднім числом */
+    startCourses: (startDate: string, prescriptionIds: number[], endDate?: string) =>
+      request('POST', '/courses', { startDate, prescriptionIds, endDate }),
+    history: (target: { drugId: number } | { groupId: number }) =>
+      request<{ today: string; courses: HistoryCourse[] }>(
+        'GET',
+        'drugId' in target ? `/history?drug=${target.drugId}` : `/history?group=${target.groupId}`,
+      ),
     prescriptionCourses: (prescriptionId: number) =>
       request<CourseRow[]>('GET', `/prescriptions/${prescriptionId}/courses`),
-    updateCourse: (id: number, patch: { startDate?: string; endedEarlyOn?: string | null }) =>
+    updateCourse: (id: number, patch: { startDate?: string; endDate?: string; endedEarlyOn?: string | null }) =>
       request<CourseRow>('PATCH', `/courses/${id}`, patch),
     deleteCourse: (id: number) => request<void>('DELETE', `/courses/${id}`),
   };

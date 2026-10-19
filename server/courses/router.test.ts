@@ -165,4 +165,38 @@ describe('courses router', () => {
     const item = (await call('GET', '/overview?person=marina')).json.items.find((i: any) => i.drug.id === nmn.id);
     expect(item.forecast.nextStartDate).toBe('2026-12-30');
   });
+
+  it('минулий курс заднім числом: свій кінець, правка і історія', async () => {
+    const drug = (await call('POST', '/drugs', {
+      name: 'Цинк', kind: 'supplement', courseDays: 60, breakDays: 30,
+      prescriptions: [{ personId: 'marina', dosage: '' }, { personId: 'husband', dosage: '' }],
+    })).json;
+    const pids = (await call('GET', '/drugs')).json.find((d: any) => d.id === drug.id).prescriptions.map((p: any) => p.id);
+
+    // кінець у майбутньому чи раніше старту — не можна
+    expect((await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-10-20', prescriptionIds: pids })).status).toBe(400);
+    expect((await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-02-01', prescriptionIds: pids })).status).toBe(400);
+
+    const r = await call('POST', '/courses', { startDate: '2026-03-01', endDate: '2026-04-10', prescriptionIds: pids });
+    expect(r.status).toBe(201);
+    expect(r.json[0].planned_end_date).toBe('2026-04-10');
+    const { json } = await call('GET', '/overview?person=marina');
+    // прогноз від фактичного кінця: 10.04 + 30 днів перерви
+    expect(json.items.find((i: any) => i.drug.id === drug.id).forecast).toMatchObject({ status: 'due', nextStartDate: '2026-05-11' });
+
+    const h = (await call('GET', `/history?drug=${drug.id}`)).json;
+    expect(h.courses).toHaveLength(2);
+    expect(h.courses[0]).toMatchObject({ startDate: '2026-03-01', endDate: '2026-04-10', drugName: 'Цинк' });
+
+    // правка кінця напряму
+    const id = h.courses[0].id;
+    expect((await call('PATCH', `/courses/${id}`, { startDate: '2026-03-01', endDate: '2026-02-01' })).status).toBe(400);
+    const e = await call('PATCH', `/courses/${id}`, { startDate: '2026-03-05', endDate: '2026-05-01' });
+    expect(e.json).toMatchObject({ start_date: '2026-03-05', planned_end_date: '2026-05-01', ended_early_on: null });
+
+    expect((await call('GET', '/history')).status).toBe(400);
+    const groups = (await call('GET', '/groups')).json;
+    const vitB = groups.find((g: any) => g.name === 'Витамины B');
+    expect((await call('GET', `/history?group=${vitB.id}`)).json.courses.length).toBeGreaterThan(0);
+  });
 });

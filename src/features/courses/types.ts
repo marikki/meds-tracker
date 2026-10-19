@@ -62,6 +62,18 @@ export interface CourseRow {
   ended_early_on: ISODate | null;
 }
 
+/** Курс в історії: GET /history?drug= | ?group= */
+export interface HistoryCourse {
+  id: number;
+  prescriptionId: number;
+  personId: string;
+  drugId: number;
+  drugName: string;
+  startDate: ISODate;
+  /** Фактичний кінець (з урахуванням дострокового) */
+  endDate: ISODate;
+}
+
 export interface Forecast {
   status: Status;
   activeCourse: { startDate: ISODate; endDate: ISODate; day: number; totalDays: number } | null;

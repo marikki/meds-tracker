@@ -466,10 +466,17 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
   });
 
   // ---------- курси ----------
-  /** Старт кількох курсів однією датою: { startDate, prescriptionIds: number[] } */
+  /**
+   * Старт кількох курсів однією датою: { startDate, prescriptionIds: number[], endDate? }.
+   * endDate — для минулого курсу, внесеного заднім числом: його фактичний кінець, не з схеми.
+   */
   r.post('/courses', (req, res) => {
     const b = req.body ?? {};
     const start = date(b.startDate, 'startDate');
+    const givenEnd = b.endDate === undefined ? null : date(b.endDate, 'endDate');
+    if (givenEnd !== null && (givenEnd < start || givenEnd > today())) {
+      throw new HttpError(400, 'Дата окончания — между стартом и сегодня');
+    }
     if (!Array.isArray(b.prescriptionIds) || b.prescriptionIds.length === 0) {
       throw new HttpError(400, 'prescriptionIds: непустой массив');
     }
@@ -479,7 +486,7 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
         const p = q.prescription.get(pid) as PrescriptionRow | undefined;
         if (!p) throw new HttpError(404, `Назначение ${pid} не найдено`);
         const d = q.drug.get(p.drug_id) as DrugRow;
-        const end = plannedEnd(start, d.course_days);
+        const end = givenEnd ?? plannedEnd(start, d.course_days);
         assertNoOverlap(pid, start, end);
         const info = db
           .prepare('INSERT INTO courses (prescription_id, start_date, planned_end_date) VALUES (?, ?, ?)')
@@ -490,13 +497,27 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     res.status(201).json(created);
   });
 
-  /** Виправити дату старту або завершити достроково (endedEarlyOn: null — скасувати дострокове). */
+  /**
+   * Виправити дату старту або завершити достроково (endedEarlyOn: null — скасувати дострокове).
+   * endDate — задати кінець напряму (правка історії): стає плановим кінцем, дострокове скидається.
+   */
   r.patch('/courses/:id', (req, res) => {
     const id = Number(req.params.id);
     const c = q.course.get(id) as CourseRow | undefined;
     if (!c) throw new HttpError(404, 'Курс не найден');
     const b = req.body ?? {};
     const start = b.startDate === undefined ? c.start_date : date(b.startDate, 'startDate');
+    if (b.endDate !== undefined) {
+      const end = date(b.endDate, 'endDate');
+      if (end < start) throw new HttpError(400, 'Окончание раньше старта');
+      assertNoOverlap(c.prescription_id, start, end, id);
+      db.prepare('UPDATE courses SET start_date = ?, planned_end_date = ?, ended_early_on = NULL WHERE id = ?').run(
+        start,
+        end,
+        id,
+      );
+      return res.json(q.course.get(id));
+    }
     // Тривалість зафіксована в самому курсі: зміна схеми в довіднику її не чіпає
     const courseDays = diffDays(c.start_date, c.planned_end_date) + 1;
     const plannedEndDate = plannedEnd(start, courseDays);
@@ -523,6 +544,34 @@ export function createCoursesRouter({ db, today = () => todayIn() }: CoursesRout
     const info = db.prepare('DELETE FROM courses WHERE id = ?').run(Number(req.params.id));
     if (info.changes === 0) throw new HttpError(404, 'Курс не найден');
     res.status(204).end();
+  });
+
+  /** Історія курсів препарату (?drug=) чи комплексу (?group=), від нових до старих */
+  r.get('/history', (req, res) => {
+    const drugId = req.query.drug === undefined ? null : Number(req.query.drug);
+    const groupId = req.query.group === undefined ? null : Number(req.query.group);
+    if (!Number.isInteger(drugId ?? groupId)) throw new HttpError(400, 'Укажите drug или group');
+    const rows = db
+      .prepare(
+        `SELECT c.*, p.person_id, p.drug_id, d.name AS drug_name FROM courses c
+         JOIN prescriptions p ON p.id = c.prescription_id
+         JOIN drugs d ON d.id = p.drug_id
+         WHERE ${drugId !== null ? 'd.id = ?' : 'd.group_id = ?'}
+         ORDER BY c.start_date DESC`,
+      )
+      .all(drugId ?? groupId) as (CourseRow & { person_id: string; drug_id: number; drug_name: string })[];
+    res.json({
+      today: today(),
+      courses: rows.map((c) => ({
+        id: c.id,
+        prescriptionId: c.prescription_id,
+        personId: c.person_id,
+        drugId: c.drug_id,
+        drugName: c.drug_name,
+        startDate: c.start_date,
+        endDate: endOf(toRecord(c)),
+      })),
+    });
   });
 
   r.get('/prescriptions/:id/courses', (req, res) => {

@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react
 import type { CoursesApi } from './api';
 import { Check } from './components/Check';
 import { PersonBadge } from './components/PersonBadge';
+import { CourseHistory } from './CourseHistory';
 import type { Drug, DrugGroup, DrugInput, DrugWithPrescriptions, GroupInput, Person } from './types';
 
 const KIND_LABEL: Record<Drug['kind'], string> = { supplement: 'Добавка', peptide: 'Пептид' };
@@ -62,7 +63,7 @@ export function DrugSheet({
             backLabel={backLabel} onClose={onClose} />
         )}
         {data && group && (
-          <GroupForm api={api} group={group} drugs={data.drugs} groups={data.groups}
+          <GroupForm api={api} people={people} group={group} drugs={data.drugs} groups={data.groups}
             backLabel={backLabel} onClose={onClose} />
         )}
       </div>
@@ -96,7 +97,7 @@ export function Drugs({ api, people }: { api: CoursesApi; people: Person[] }) {
     return 'drug' in editing ? (
       <DrugForm api={api} people={people} drug={editing.drug} drugs={drugs} groups={groups} onClose={onClose} />
     ) : (
-      <GroupForm api={api} group={editing.group} drugs={drugs} groups={groups} onClose={onClose} />
+      <GroupForm api={api} people={people} group={editing.group} drugs={drugs} groups={groups} onClose={onClose} />
     );
   }
   if (error) return <p className="p-5 text-due-ink">{error}</p>;
@@ -349,6 +350,8 @@ function DrugForm({
   );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Історію правлять окремо від форми; після змін «Сегодня» треба перечитати
+  const [historyChanged, setHistoryChanged] = useState(false);
 
   const togglePerson = (id: string) =>
     setDosages(({ [id]: current, ...rest }) => (current === undefined ? { ...rest, [id]: '' } : rest));
@@ -385,11 +388,12 @@ function DrugForm({
   }
 
   return (
+    <>
     <form onSubmit={save} className="flex flex-col gap-4 px-5 pt-6 pb-6">
       <header className="flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => onClose(false)}
+          onClick={() => onClose(historyChanged)}
           className="flex items-center gap-1 self-start text-sm font-semibold text-accent"
         >
           <ChevronLeft size={18} aria-hidden="true" />
@@ -481,11 +485,25 @@ function DrugForm({
         </button>
       )}
     </form>
+    {drug && (
+      <div className="px-5 pb-8">
+        <CourseHistory
+          api={api}
+          people={people}
+          target={{ drugId: drug.id }}
+          prescriptions={drug.prescriptions}
+          courseDays={drug.courseDays}
+          onChanged={() => setHistoryChanged(true)}
+        />
+      </div>
+    )}
+    </>
   );
 }
 
 function GroupForm({
   api,
+  people,
   group,
   drugs,
   groups,
@@ -493,6 +511,7 @@ function GroupForm({
   backLabel = 'Препараты',
 }: {
   api: CoursesApi;
+  people: Person[];
   group: DrugGroup | null;
   drugs: DrugWithPrescriptions[];
   groups: DrugGroup[];
@@ -507,6 +526,8 @@ function GroupForm({
   const [members, setMembers] = useState<Set<number>>(() => new Set(group?.drugIds ?? []));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Історію правлять окремо від форми; після змін «Сегодня» треба перечитати
+  const [historyChanged, setHistoryChanged] = useState(false);
 
   // Архівні показуємо лише якщо вони вже в комплексі
   const candidates = drugs.filter((d) => !d.archived || members.has(d.id));
@@ -551,11 +572,12 @@ function GroupForm({
   }
 
   return (
+    <>
     <form onSubmit={save} className="flex flex-col gap-4 px-5 pt-6 pb-6">
       <header className="flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => onClose(false)}
+          onClick={() => onClose(historyChanged)}
           className="flex items-center gap-1 self-start text-sm font-semibold text-accent"
         >
           <ChevronLeft size={18} aria-hidden="true" />
@@ -622,5 +644,19 @@ function GroupForm({
         </button>
       )}
     </form>
+    {group && (
+      <div className="px-5 pb-8">
+        <CourseHistory
+          api={api}
+          people={people}
+          target={{ groupId: group.id }}
+          // Лише збережений склад: курси в історії — від нього
+          prescriptions={drugs.filter((d) => d.groupId === group.id && !d.archived).flatMap((d) => d.prescriptions)}
+          courseDays={group.courseDays}
+          onChanged={() => setHistoryChanged(true)}
+        />
+      </div>
+    )}
+    </>
   );
 }
